@@ -26,6 +26,7 @@
     "title": "タイトル",
     "artist": "アーティスト",
     "album": "アルバム",
+    "format": "フォーマット",
     "codec": "コーデック",
     "sample_rate": "サンプルレート",
     "bit_depth": "ビット深度",
@@ -34,17 +35,39 @@
     "duration": "再生時間",
     "file_path": "ファイルパス",
     "output_mode": "出力モード",
-    "unknown": "不明"
+    "unknown_artist": "不明なアーティスト",
+    "unknown_album": "不明なアルバム",
+    "no_track_loaded": "トラックが読み込まれていません"
   },
   "controls": {
     "header": "再生コントロール",
     "volume": "音量: {val}%",
     "progress": "進捗",
-    "repeat_none": "リピート: OFF",
-    "repeat_all": "リピート: 全曲",
-    "repeat_single": "リピート: 1曲",
-    "shuffle_on": "シャッフル: ON",
-    "shuffle_off": "シャッフル: OFF"
+    "repeat_off": "OFF",
+    "repeat_all": "全曲",
+    "repeat_single": "1曲",
+    "shuffle_on": "ON",
+    "shuffle_off": "OFF"
+  },
+  "modal": {
+    "device_select": "出力デバイス選択",
+    "help": "ショートカットヘルプ",
+    "error": "エラー",
+    "press_esc": "Esc または Enter で閉じる"
+  },
+  "shortcuts": {
+    "play_pause": "再生 / 一時停止",
+    "select_track": "カーソル移動",
+    "play_selected": "選択曲を再生",
+    "seek": "±5秒 シーク",
+    "volume": "音量 ±5%",
+    "repeat": "リピートモード切替",
+    "shuffle": "シャッフル切替",
+    "exclusive": "排他モード切替",
+    "devices": "デバイス選択",
+    "pane_switch": "ペイン切替",
+    "help": "ヘルプ表示",
+    "quit": "終了"
   },
   "help": {
     "space": "Space: 再生/一時停止",
@@ -64,4 +87,3 @@
     "decode_error": "デコード中にエラーが発生しました: {error}"
   }
 }
-

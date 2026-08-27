@@ -1,5 +1,6 @@
 use crate::audio::ring_buffer::SharedAudioState;
 use crate::audio::traits::{AudioDeviceInfo, AudioOutputBackend};
+use crate::logger;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rtrb::Consumer;
 use std::error::Error;
@@ -36,8 +37,8 @@ impl SharedBackend {
 
     pub fn create(
         device_name: &str,
-        sample_rate: u32,
-        channels: u16,
+        source_sample_rate: u32,
+        source_channels: u16,
         mut consumer: Consumer<f32>,
         state: Arc<SharedAudioState>,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
@@ -62,54 +63,139 @@ impl SharedBackend {
                 .ok_or("Specified output device not found, and no default device available")?
         };
 
+        // デバイスの既定フォーマットを取得（Windows Audio Engineの共有ミキサー設定）
+        let default_cfg = device.default_output_config()?;
+        let output_sample_rate = default_cfg.sample_rate().0;
+        let output_channels = default_cfg.channels();
+
+        logger::info(
+            "SharedBackend",
+            &format!(
+                "Hardware stream target: rate={}Hz, ch={}. Source: rate={}Hz, ch={}",
+                output_sample_rate, output_channels, source_sample_rate, source_channels
+            ),
+        );
+
         let config = cpal::StreamConfig {
-            channels,
-            sample_rate: cpal::SampleRate(sample_rate),
+            channels: output_channels,
+            sample_rate: cpal::SampleRate(output_sample_rate),
             buffer_size: cpal::BufferSize::Default,
         };
 
         let err_callback = |err| {
-            eprintln!("Audio stream error: {:?}", err);
+            logger::error("SharedBackend", &format!("Audio stream callback error: {:?}", err));
         };
 
-        let stream = device.build_output_stream(
-            &config,
-            move |output: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                let is_playing = state.is_playing.load(Ordering::Relaxed);
-                if !is_playing {
-                    output.fill(0.0);
-                    return;
-                }
+        let src_channels = source_channels.max(1) as usize;
+        let out_channels = output_channels.max(1) as usize;
 
-                let vol = state.get_volume();
-                let ch_count = channels.max(1) as usize;
-                let mut frames_played = 0;
+        // 同一レート・チャンネルの場合はダイレクト出力
+        let is_direct = source_sample_rate == output_sample_rate && src_channels == out_channels;
 
-                for frame in output.chunks_mut(ch_count) {
-                    let mut frame_ok = true;
-                    for ch_sample in frame.iter_mut() {
-                        match consumer.pop() {
-                            Ok(sample) => {
-                                *ch_sample = sample * vol;
-                            }
-                            Err(_) => {
-                                *ch_sample = 0.0;
-                                frame_ok = false;
+        let stream = if is_direct {
+            logger::info("SharedBackend", "Direct 1:1 stream path selected (no resampling).");
+            device.build_output_stream(
+                &config,
+                move |output: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    let is_playing = state.is_playing.load(Ordering::Relaxed);
+                    if !is_playing {
+                        output.fill(0.0);
+                        return;
+                    }
+
+                    let vol = state.get_volume();
+                    let mut frames_played = 0;
+
+                    for frame in output.chunks_mut(out_channels) {
+                        let mut frame_ok = true;
+                        for ch_sample in frame.iter_mut() {
+                            match consumer.pop() {
+                                Ok(sample) => {
+                                    *ch_sample = sample * vol;
+                                }
+                                Err(_) => {
+                                    *ch_sample = 0.0;
+                                    frame_ok = false;
+                                }
                             }
                         }
+                        if frame_ok {
+                            frames_played += 1;
+                        }
                     }
-                    if frame_ok {
-                        frames_played += 1;
-                    }
-                }
 
-                if frames_played > 0 {
-                    state.current_sample_position.fetch_add(frames_played as u64, Ordering::Relaxed);
-                }
-            },
-            err_callback,
-            None,
-        )?;
+                    if frames_played > 0 {
+                        state.current_sample_position.fetch_add(frames_played as u64, Ordering::Relaxed);
+                    }
+                },
+                err_callback,
+                None,
+            )?
+        } else {
+            logger::info(
+                "SharedBackend",
+                &format!("Auto-Resampler enabled ({}Hz -> {}Hz).", source_sample_rate, output_sample_rate),
+            );
+            let resample_ratio = source_sample_rate as f64 / output_sample_rate as f64;
+            let mut curr_frame = vec![0.0f32; src_channels];
+            let mut next_frame = vec![0.0f32; src_channels];
+            let mut src_fraction = 0.0f64;
+
+            // 初期フレームの読み込み
+            for ch in 0..src_channels {
+                curr_frame[ch] = consumer.pop().unwrap_or(0.0);
+                next_frame[ch] = consumer.pop().unwrap_or(0.0);
+            }
+
+            device.build_output_stream(
+                &config,
+                move |output: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    let is_playing = state.is_playing.load(Ordering::Relaxed);
+                    if !is_playing {
+                        output.fill(0.0);
+                        return;
+                    }
+
+                    let vol = state.get_volume();
+                    let mut src_frames_consumed = 0u64;
+
+                    for frame in output.chunks_mut(out_channels) {
+                        // 線形補間サンプル値の計算
+                        let frac = src_fraction as f32;
+                        let mut interpolated_src = vec![0.0f32; src_channels];
+                        for ch in 0..src_channels {
+                            interpolated_src[ch] = (curr_frame[ch] * (1.0 - frac) + next_frame[ch] * frac) * vol;
+                        }
+
+                        // チャンネルマッピング
+                        for (out_ch_idx, out_sample) in frame.iter_mut().enumerate() {
+                            if out_ch_idx < src_channels {
+                                *out_sample = interpolated_src[out_ch_idx];
+                            } else {
+                                // モノラル -> ステレオ、または 2ch -> マルチチャンネルの補完
+                                *out_sample = interpolated_src[out_ch_idx % src_channels];
+                            }
+                        }
+
+                        src_fraction += resample_ratio;
+                        while src_fraction >= 1.0 {
+                            src_fraction -= 1.0;
+                            curr_frame.copy_from_slice(&next_frame);
+                            for ch in 0..src_channels {
+                                next_frame[ch] = consumer.pop().unwrap_or(0.0);
+                            }
+                            src_frames_consumed += 1;
+                        }
+                    }
+
+                    if src_frames_consumed > 0 {
+                        state.current_sample_position.fetch_add(src_frames_consumed, Ordering::Relaxed);
+                    }
+                },
+                err_callback,
+                None,
+            )?
+        };
 
         Ok(Self {
             stream,
@@ -169,4 +255,3 @@ mod tests {
         }
     }
 }
-

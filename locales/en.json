@@ -26,6 +26,7 @@
     "title": "Title",
     "artist": "Artist",
     "album": "Album",
+    "format": "Format",
     "codec": "Codec",
     "sample_rate": "Sample Rate",
     "bit_depth": "Bit Depth",
@@ -34,17 +35,39 @@
     "duration": "Duration",
     "file_path": "File Path",
     "output_mode": "Output Mode",
-    "unknown": "Unknown"
+    "unknown_artist": "Unknown Artist",
+    "unknown_album": "Unknown Album",
+    "no_track_loaded": "No track loaded"
   },
   "controls": {
     "header": "Playback Controls",
     "volume": "Volume: {val}%",
     "progress": "Progress",
-    "repeat_none": "Repeat: OFF",
-    "repeat_all": "Repeat: All",
-    "repeat_single": "Repeat: Single",
-    "shuffle_on": "Shuffle: ON",
-    "shuffle_off": "Shuffle: OFF"
+    "repeat_off": "OFF",
+    "repeat_all": "All",
+    "repeat_single": "Single",
+    "shuffle_on": "ON",
+    "shuffle_off": "OFF"
+  },
+  "modal": {
+    "device_select": "Select Audio Device",
+    "help": "Keybindings Help",
+    "error": "Error",
+    "press_esc": "Press Esc or Enter to close"
+  },
+  "shortcuts": {
+    "play_pause": "Play / Pause",
+    "select_track": "Select Track",
+    "play_selected": "Play Selected Track",
+    "seek": "±5s Seek",
+    "volume": "Volume ±5%",
+    "repeat": "Repeat Mode",
+    "shuffle": "Shuffle Mode",
+    "exclusive": "Toggle Exclusive Mode",
+    "devices": "Select Device",
+    "pane_switch": "Switch Pane",
+    "help": "Show Help",
+    "quit": "Quit"
   },
   "help": {
     "space": "Space: Play/Pause",
@@ -64,4 +87,3 @@
     "decode_error": "Error occurred during decode: {error}"
   }
 }
-
