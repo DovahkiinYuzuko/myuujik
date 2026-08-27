@@ -17,6 +17,10 @@ struct CliArgs {
     /// Force exclusive output mode (Windows WASAPI)
     #[arg(short, long)]
     exclusive: bool,
+
+    /// Enable shuffle mode
+    #[arg(short, long)]
+    shuffle: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -46,20 +50,33 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     });
 
     if let Some(path) = target_path {
-        if path.is_file() {
-            println!("Opening track: {:?}", path);
+        let mut playlist = myuujik::playlist::PlaylistManager::new();
+        if args.shuffle {
+            playlist.set_shuffle(true);
+        }
+
+        let count = playlist.load_path(&path);
+        let count_str = format!("{}", count);
+        println!("{}", i18n.t_args("playlist.total_tracks", &[("count", &count_str)]));
+
+        for item in playlist.items() {
+            println!("  [{}] {}", item.id + 1, item.display_name);
+        }
+
+        if let Some(first_track) = playlist.select_and_play(0) {
+            println!("\n▶ Opening: {}", first_track.display_name);
             let engine = myuujik::audio::AudioEngine::new(
                 &config.audio.output_mode,
                 &config.audio.output_device,
                 config.audio.volume,
             )?;
 
-            engine.play_file(&path);
+            engine.play_file(&first_track.path);
             println!("Playback started. Active mode: {}", engine.active_output_mode());
 
             // 簡易再生ループ（進捗表示）
             let mut elapsed = 0;
-            while elapsed < 50 {
+            while elapsed < 40 {
                 thread::sleep(Duration::from_millis(100));
                 let cur = engine.current_position_secs();
                 let dur = engine.total_duration_secs();
@@ -70,8 +87,6 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 elapsed += 1;
             }
             println!("\nPlayback verified!");
-        } else {
-            println!("Target directory: {:?}", path);
         }
     }
 
