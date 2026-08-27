@@ -1,0 +1,71 @@
+[package]
+name = "myuujik"
+version = "0.1.0"
+edition = "2021"
+authors = ["Yuzuko Underson <rikuichi0212@gmail.com>"]
+description = "High-quality, ultra-lightweight TUI audio player in Rust"
+license = "MIT"
+
+[dependencies]
+# Audio Decoding & Metadata
+symphonia = { version = "0.5", features = ["all"] }
+
+# Audio Output (Cross-platform Shared)
+cpal = "0.15"
+
+# Realtime Lock-Free SPSC Ring Buffer
+rtrb = "0.3"
+
+# TUI & Terminal Control
+ratatui = "0.29"
+crossterm = { version = "0.28", features = ["event-stream"] }
+ratatui-image = "3.0"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+# Multi-language & Localization
+rokeeru-core = "0.1"
+
+# Serialization & Config
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# CLI & Directory Scan
+clap = { version = "4.5", features = ["derive"] }
+walkdir = "2.5"
+crossbeam-channel = "0.5"
+directories = "5.0"
+rand = "0.8"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Media_Audio",
+    "Win32_System_Com",
+    "Win32_System_Threading",
+    "Win32_Foundation",
+] }
+
+
+[profile.dev]
+# デバッグ情報をライン番号のみに削減（PDB生成を劇的に軽量化）
+debug = 1
+
+# 依存クレート（symphonia, windows, ratatui など）だけ最適化
+# 初回ビルド後はキャッシュされ、2回目以降は自作コードのみの爆速ビルドになります。
+[profile.dev.package."*"]
+opt-level = 2
+
+# ==========================================
+# リリース時（cargo build --release）の設定
+# ==========================================
+[profile.release]
+opt-level = 3
+# lto = true (fat LTO) は1スレッドで極めて重いリンク処理をするため、
+# 並列リンク可能な "thin" に変更（サイズ・実行速度の差はごく僅かでビルドは圧倒的に速い）
+lto = "thin"
+
+# 1スレッド固定を解除し、複数スレッドで並列にコード生成させる
+codegen-units = 16
+
+panic = "abort"
+strip = true

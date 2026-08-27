@@ -1,0 +1,67 @@
+{
+  "language_name": "日本語",
+  "app": {
+    "title": "myuujik",
+    "subtitle": "高音質・超軽量 TUI オーディオプレイヤー",
+    "mode_shared": "Shared",
+    "mode_shared_fallback": "Shared (Fallback)",
+    "mode_exclusive": "Exclusive (Bit-Perfect)",
+    "bit_perfect_locked": "LOCKED (Bit-Perfect)",
+    "status_playing": "再生中",
+    "status_paused": "一時停止",
+    "status_stopped": "停止",
+    "status_buffering": "バッファ中",
+    "status_seeking": "シーク中",
+    "status_error": "エラー"
+  },
+  "playlist": {
+    "header": "プレイリスト",
+    "empty": "再生可能な楽曲がありません。フォルダまたはファイルを指定してください。",
+    "scanning": "ファイルを走査中...",
+    "total_tracks": "全 {count} 曲",
+    "selected": "選択中: {index}/{total}"
+  },
+  "track_info": {
+    "header": "楽曲情報",
+    "title": "タイトル",
+    "artist": "アーティスト",
+    "album": "アルバム",
+    "codec": "コーデック",
+    "sample_rate": "サンプルレート",
+    "bit_depth": "ビット深度",
+    "channels": "チャンネル",
+    "bitrate": "ビットレート",
+    "duration": "再生時間",
+    "file_path": "ファイルパス",
+    "output_mode": "出力モード",
+    "unknown": "不明"
+  },
+  "controls": {
+    "header": "再生コントロール",
+    "volume": "音量: {val}%",
+    "progress": "進捗",
+    "repeat_none": "リピート: OFF",
+    "repeat_all": "リピート: 全曲",
+    "repeat_single": "リピート: 1曲",
+    "shuffle_on": "シャッフル: ON",
+    "shuffle_off": "シャッフル: OFF"
+  },
+  "help": {
+    "space": "Space: 再生/一時停止",
+    "arrows": "↑/↓: 選択  ←/→: ±5秒シーク",
+    "enter": "Enter: 再生",
+    "volume": "[ / ]: 音量調整",
+    "repeat": "r: リピート切替",
+    "shuffle": "s: シャッフル切替",
+    "mode": "e: 出力モード切替",
+    "quit": "q / Esc: 終了"
+  },
+  "errors": {
+    "exclusive_failed": "排他モードの初期化に失敗しました。Sharedモードで再生します。",
+    "unsupported_format": "サポートされていない音声フォーマットです: {path}",
+    "device_lost": "出力デバイスが切断されました。",
+    "file_not_found": "指定されたファイルが見つかりません: {path}",
+    "decode_error": "デコード中にエラーが発生しました: {error}"
+  }
+}
+
