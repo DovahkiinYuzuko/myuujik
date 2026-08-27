@@ -21,10 +21,12 @@ impl ExclusiveBackend {
         _device_name: &str,
         sample_rate: u32,
         channels: u16,
-        bits_per_sample: u16,
+        _bits_per_sample: u16,
         consumer: Consumer<f32>,
         state: Arc<SharedAudioState>,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        use windows::core::GUID;
+        use windows::Win32::Foundation::*;
         use windows::Win32::Media::Audio::*;
         use windows::Win32::System::Com::*;
         use windows::Win32::System::Threading::*;
@@ -35,9 +37,15 @@ impl ExclusiveBackend {
         let is_running_clone = Arc::clone(&is_running);
         let stop_signal_clone = Arc::clone(&stop_signal);
 
+        let (init_tx, init_rx) = std::sync::mpsc::channel::<Result<(), String>>();
+
+        let guid_float = GUID::from_values(0x00000003, 0x0000, 0x0010, [0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71]);
+        let guid_pcm = GUID::from_values(0x00000001, 0x0000, 0x0010, [0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71]);
+
         let thread_handle = std::thread::spawn(move || {
             unsafe {
                 if CoInitializeEx(None, COINIT_MULTITHREADED).is_err() {
+                    let _ = init_tx.send(Err("CoInitializeEx failed".to_string()));
                     return;
                 }
 
@@ -49,7 +57,8 @@ impl ExclusiveBackend {
 
                 let enumerator = match enumerator {
                     Ok(e) => e,
-                    Err(_) => {
+                    Err(e) => {
+                        let _ = init_tx.send(Err(format!("MMDeviceEnumerator failed: {:?}", e)));
                         CoUninitialize();
                         return;
                     }
@@ -62,61 +71,149 @@ impl ExclusiveBackend {
 
                 let device = match device {
                     Ok(d) => d,
-                    Err(_) => {
+                    Err(e) => {
+                        let _ = init_tx.send(Err(format!("GetDefaultAudioEndpoint failed: {:?}", e)));
                         CoUninitialize();
                         return;
                     }
                 };
 
                 let client: Result<IAudioClient, _> = device.Activate(CLSCTX_ALL, None);
-                let client = match client {
+                let mut client = match client {
                     Ok(c) => c,
-                    Err(_) => {
+                    Err(e) => {
+                        let _ = init_tx.send(Err(format!("IAudioClient Activate failed: {:?}", e)));
                         CoUninitialize();
                         return;
                     }
                 };
 
-                let bits = if bits_per_sample == 0 { 16 } else { bits_per_sample };
-                let block_align = channels * (bits / 8);
-                let avg_bytes = sample_rate * block_align as u32;
+                // ハードウェアデバイス周期の取得
+                let mut default_period: i64 = 0;
+                let mut min_period: i64 = 0;
+                if client.GetDevicePeriod(Some(&mut default_period), Some(&mut min_period)).is_err() || default_period == 0 {
+                    default_period = 100_000; // 10ms fallback
+                }
 
-                let format = WAVEFORMATEX {
-                    wFormatTag: WAVE_FORMAT_PCM as u16,
-                    nChannels: channels,
-                    nSamplesPerSec: sample_rate,
-                    nAvgBytesPerSec: avg_bytes,
-                    nBlockAlign: block_align,
-                    wBitsPerSample: bits,
-                    cbSize: 0,
+                // 1. IEEE Float 32-bit フォーマットの構築を試行
+                let channel_mask = if channels == 1 { 0x4 } else { 0x3 };
+                let format_ext_float = WAVEFORMATEXTENSIBLE {
+                    Format: WAVEFORMATEX {
+                        wFormatTag: 0xFFFEu16, // WAVE_FORMAT_EXTENSIBLE
+                        nChannels: channels,
+                        nSamplesPerSec: sample_rate,
+                        nAvgBytesPerSec: sample_rate * (channels as u32) * 4,
+                        nBlockAlign: channels * 4,
+                        wBitsPerSample: 32,
+                        cbSize: 22,
+                    },
+                    Samples: WAVEFORMATEXTENSIBLE_0 {
+                        wValidBitsPerSample: 32,
+                    },
+                    dwChannelMask: channel_mask,
+                    SubFormat: guid_float,
                 };
 
-                let buffer_duration_hns: i64 = 100_000; // 10ms
+                let format_ext_pcm = WAVEFORMATEXTENSIBLE {
+                    Format: WAVEFORMATEX {
+                        wFormatTag: 0xFFFEu16,
+                        nChannels: channels,
+                        nSamplesPerSec: sample_rate,
+                        nAvgBytesPerSec: sample_rate * (channels as u32) * 2,
+                        nBlockAlign: channels * 2,
+                        wBitsPerSample: 16,
+                        cbSize: 22,
+                    },
+                    Samples: WAVEFORMATEXTENSIBLE_0 {
+                        wValidBitsPerSample: 16,
+                    },
+                    dwChannelMask: channel_mask,
+                    SubFormat: guid_pcm,
+                };
 
-                let init_res = client.Initialize(
+                let mut is_float = true;
+                let mut p_format = &format_ext_float as *const _ as *const WAVEFORMATEX;
+
+                let support_check = client.IsFormatSupported(
                     AUDCLNT_SHAREMODE_EXCLUSIVE,
-                    AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-                    buffer_duration_hns,
-                    buffer_duration_hns,
-                    &format,
+                    p_format,
                     None,
                 );
 
-                if init_res.is_err() {
+                // Float非対応の場合、16-bit PCM フォーマットを試行
+                if support_check.is_err() {
+                    is_float = false;
+                    p_format = &format_ext_pcm as *const _ as *const WAVEFORMATEX;
+
+                    if client.IsFormatSupported(
+                        AUDCLNT_SHAREMODE_EXCLUSIVE,
+                        p_format,
+                        None,
+                    ).is_err() {
+                        let _ = init_tx.send(Err("Device does not support requested format in Exclusive mode".to_string()));
+                        CoUninitialize();
+                        return;
+                    }
+                }
+
+                let mut period_to_use = default_period;
+                let mut init_res = client.Initialize(
+                    AUDCLNT_SHAREMODE_EXCLUSIVE,
+                    AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+                    period_to_use,
+                    period_to_use,
+                    p_format,
+                    None,
+                );
+
+                // アライメントエラー発生時の再アライメント処理
+                if let Err(ref e) = init_res {
+                    if e.code() == AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED {
+                        if let Ok(aligned_frames) = client.GetBufferSize() {
+                            period_to_use = ((aligned_frames as f64 / sample_rate as f64 * 10_000_000.0) + 0.5) as i64;
+                            // クライアントを再アクティベートして再初期化
+                            if let Ok(c2) = device.Activate::<IAudioClient>(CLSCTX_ALL, None) {
+                                client = c2;
+                                init_res = client.Initialize(
+                                    AUDCLNT_SHAREMODE_EXCLUSIVE,
+                                    AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+                                    period_to_use,
+                                    period_to_use,
+                                    p_format,
+                                    None,
+                                );
+                            }
+                        }
+                    }
+                }
+
+                if let Err(e) = init_res {
+                    let _ = init_tx.send(Err(format!("Initialize exclusive stream failed: {:?}", e)));
                     CoUninitialize();
                     return;
                 }
 
-                let audio_event = match CreateEventW(None, false, false, None) {
-                    Ok(h) => h,
-                    Err(_) => {
+                let buffer_frames = match client.GetBufferSize() {
+                    Ok(bf) => bf,
+                    Err(e) => {
+                        let _ = init_tx.send(Err(format!("GetBufferSize failed: {:?}", e)));
                         CoUninitialize();
                         return;
                     }
                 };
 
-                if client.SetEventHandle(audio_event).is_err() {
-                    let _ = windows::Win32::Foundation::CloseHandle(audio_event);
+                let audio_event = match CreateEventW(None, false, false, None) {
+                    Ok(h) => h,
+                    Err(e) => {
+                        let _ = init_tx.send(Err(format!("CreateEventW failed: {:?}", e)));
+                        CoUninitialize();
+                        return;
+                    }
+                };
+
+                if let Err(e) = client.SetEventHandle(audio_event) {
+                    let _ = CloseHandle(audio_event);
+                    let _ = init_tx.send(Err(format!("SetEventHandle failed: {:?}", e)));
                     CoUninitialize();
                     return;
                 }
@@ -124,19 +221,51 @@ impl ExclusiveBackend {
                 let render_client: Result<IAudioRenderClient, _> = client.GetService();
                 let render_client = match render_client {
                     Ok(rc) => rc,
-                    Err(_) => {
-                        let _ = windows::Win32::Foundation::CloseHandle(audio_event);
+                    Err(e) => {
+                        let _ = CloseHandle(audio_event);
+                        let _ = init_tx.send(Err(format!("GetService IAudioRenderClient failed: {:?}", e)));
                         CoUninitialize();
                         return;
                     }
                 };
 
                 let mut mut_consumer = consumer;
-                let _ = client.Start();
+                let ch_count = channels as usize;
+                let total_samples_per_buffer = (buffer_frames as usize) * ch_count;
 
+                // プレバッファリング（再生開始前の先頭バッファ初期充填）
+                if let Ok(buffer_ptr) = render_client.GetBuffer(buffer_frames) {
+                    let vol = state.get_volume();
+                    if is_float {
+                        let dest_slice = std::slice::from_raw_parts_mut(buffer_ptr as *mut f32, total_samples_per_buffer);
+                        for sample in dest_slice.iter_mut() {
+                            *sample = mut_consumer.pop().unwrap_or(0.0) * vol;
+                        }
+                    } else {
+                        let dest_slice = std::slice::from_raw_parts_mut(buffer_ptr as *mut i16, total_samples_per_buffer);
+                        for sample in dest_slice.iter_mut() {
+                            let f = mut_consumer.pop().unwrap_or(0.0) * vol;
+                            *sample = (f * 32767.0).clamp(-32768.0, 32767.0) as i16;
+                        }
+                    }
+                    let _ = render_client.ReleaseBuffer(buffer_frames, 0);
+                    state.current_sample_position.fetch_add(buffer_frames as u64, Ordering::Relaxed);
+                }
+
+                if let Err(e) = client.Start() {
+                    let _ = CloseHandle(audio_event);
+                    let _ = init_tx.send(Err(format!("IAudioClient Start failed: {:?}", e)));
+                    CoUninitialize();
+                    return;
+                }
+
+                // 初期化成功通知
+                let _ = init_tx.send(Ok(()));
+
+                // リアルタイム排他再生ループ
                 while !stop_signal_clone.load(Ordering::Relaxed) {
-                    let wait_res = WaitForSingleObject(audio_event, 2000);
-                    if wait_res != windows::Win32::Foundation::WAIT_OBJECT_0 {
+                    let wait_res = WaitForSingleObject(audio_event, 1000);
+                    if wait_res != WAIT_OBJECT_0 {
                         continue;
                     }
 
@@ -144,44 +273,65 @@ impl ExclusiveBackend {
                         break;
                     }
 
-                    if !is_running_clone.load(Ordering::Relaxed) || !state.is_playing.load(Ordering::Relaxed) {
-                        continue;
-                    }
+                    let is_active = is_running_clone.load(Ordering::Relaxed) && state.is_playing.load(Ordering::Relaxed);
 
-                    let padding = client.GetCurrentPadding().unwrap_or(0);
-                    let buffer_size = client.GetBufferSize().unwrap_or(0);
-                    let frames_needed = buffer_size.saturating_sub(padding);
+                    if let Ok(buffer_ptr) = render_client.GetBuffer(buffer_frames) {
+                        let vol = if is_active { state.get_volume() } else { 0.0 };
 
-                    if frames_needed == 0 {
-                        continue;
-                    }
-
-                    if let Ok(buffer_ptr) = render_client.GetBuffer(frames_needed) {
-                        let vol = state.get_volume();
-                        let total_samples = (frames_needed as usize) * (channels as usize);
-                        let dest_slice = std::slice::from_raw_parts_mut(buffer_ptr as *mut i16, total_samples);
-
-                        for sample in dest_slice.iter_mut() {
-                            let f32_val = mut_consumer.pop().unwrap_or(0.0) * vol;
-                            *sample = (f32_val * 32767.0).clamp(-32768.0, 32767.0) as i16;
+                        if is_float {
+                            let dest_slice = std::slice::from_raw_parts_mut(buffer_ptr as *mut f32, total_samples_per_buffer);
+                            if is_active {
+                                for sample in dest_slice.iter_mut() {
+                                    *sample = mut_consumer.pop().unwrap_or(0.0) * vol;
+                                }
+                            } else {
+                                dest_slice.fill(0.0);
+                            }
+                        } else {
+                            let dest_slice = std::slice::from_raw_parts_mut(buffer_ptr as *mut i16, total_samples_per_buffer);
+                            if is_active {
+                                for sample in dest_slice.iter_mut() {
+                                    let f = mut_consumer.pop().unwrap_or(0.0) * vol;
+                                    *sample = (f * 32767.0).clamp(-32768.0, 32767.0) as i16;
+                                }
+                            } else {
+                                dest_slice.fill(0);
+                            }
                         }
 
-                        let _ = render_client.ReleaseBuffer(frames_needed, 0);
-                        state.current_sample_position.fetch_add(frames_needed as u64, Ordering::Relaxed);
+                        let _ = render_client.ReleaseBuffer(buffer_frames, 0);
+                        if is_active {
+                            state.current_sample_position.fetch_add(buffer_frames as u64, Ordering::Relaxed);
+                        }
                     }
                 }
 
                 let _ = client.Stop();
-                let _ = windows::Win32::Foundation::CloseHandle(audio_event);
+                let _ = CloseHandle(audio_event);
                 CoUninitialize();
             }
         });
 
-        Ok(Self {
-            is_running,
-            stop_signal,
-            thread_handle: Some(thread_handle),
-        })
+        // ワーカースレッドの初期化完了待機
+        match init_rx.recv_timeout(std::time::Duration::from_millis(1500)) {
+            Ok(Ok(())) => {
+                Ok(Self {
+                    is_running,
+                    stop_signal,
+                    thread_handle: Some(thread_handle),
+                })
+            }
+            Ok(Err(err_msg)) => {
+                stop_signal.store(true, Ordering::Relaxed);
+                let _ = thread_handle.join();
+                Err(err_msg.into())
+            }
+            Err(_) => {
+                stop_signal.store(true, Ordering::Relaxed);
+                let _ = thread_handle.join();
+                Err("WASAPI Exclusive initialization timed out".into())
+            }
+        }
     }
 
     #[cfg(not(windows))]

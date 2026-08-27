@@ -13,3 +13,4 @@ pub trait AudioOutputBackend: Send {
     fn is_active(&self) -> bool;
     fn mode_name(&self) -> &'static str;
 }
+
