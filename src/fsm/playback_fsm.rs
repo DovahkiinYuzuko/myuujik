@@ -56,6 +56,9 @@ impl PlaybackFsm {
             (PlaybackState::Buffering { .. }, PlaybackEvent::BufferReady) => {
                 (PlaybackState::Playing, true)
             }
+            (PlaybackState::Buffering { .. }, PlaybackEvent::Pause | PlaybackEvent::TogglePause) => {
+                (PlaybackState::Paused, true)
+            }
             (PlaybackState::Buffering { .. }, PlaybackEvent::Stop) => {
                 (PlaybackState::Stopped, true)
             }
@@ -214,4 +217,3 @@ mod tests {
         assert_eq!(*fsm.state(), PlaybackState::Buffering { track_id: 1, target_position_secs: 0.0 });
     }
 }
-

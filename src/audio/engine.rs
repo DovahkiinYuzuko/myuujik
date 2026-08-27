@@ -356,15 +356,20 @@ mod tests {
         let sample_wav = Path::new("sample/Kendrick Lamar - Not Like Us.wav");
         if sample_wav.exists() {
             engine.play_file(sample_wav);
-            thread::sleep(Duration::from_millis(100));
+            // デコード開始・再生遷移待機
+            let mut waited = 0;
+            while (engine.current_state() == PlaybackState::Stopped || matches!(engine.current_state(), PlaybackState::Buffering { .. })) && waited < 50 {
+                thread::sleep(Duration::from_millis(20));
+                waited += 1;
+            }
 
             // 一時停止と再開
             engine.pause();
-            thread::sleep(Duration::from_millis(20));
+            thread::sleep(Duration::from_millis(30));
             assert_eq!(engine.current_state(), PlaybackState::Paused);
 
             engine.resume();
-            thread::sleep(Duration::from_millis(20));
+            thread::sleep(Duration::from_millis(30));
             assert_eq!(engine.current_state(), PlaybackState::Playing);
 
             // シーク
@@ -372,9 +377,8 @@ mod tests {
             thread::sleep(Duration::from_millis(50));
 
             engine.stop();
-            thread::sleep(Duration::from_millis(20));
+            thread::sleep(Duration::from_millis(30));
             assert_eq!(engine.current_state(), PlaybackState::Stopped);
         }
     }
 }
-
