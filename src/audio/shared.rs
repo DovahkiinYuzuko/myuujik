@@ -11,7 +11,6 @@ pub struct SharedBackend {
     is_running: bool,
 }
 
-// cpal::Stream はデスクトップOS（Windows, macOS, Linux）において安全にスレッド間移動可能
 unsafe impl Send for SharedBackend {}
 
 impl SharedBackend {
@@ -149,7 +148,6 @@ mod tests {
     #[test]
     fn test_list_devices_returns_available_devices() {
         let devices = SharedBackend::list_devices();
-        // システム上にオーディオデバイスが存在していれば1つ以上返る
         if !devices.is_empty() {
             assert!(devices.iter().any(|d| d.is_default || !d.name.is_empty()));
         }
