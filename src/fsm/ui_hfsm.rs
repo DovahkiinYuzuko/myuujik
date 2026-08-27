@@ -102,3 +102,4 @@ mod tests {
         assert_eq!(ui.modal, ModalState::None);
     }
 }
+

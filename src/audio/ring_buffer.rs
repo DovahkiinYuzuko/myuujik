@@ -122,3 +122,4 @@ mod tests {
         assert_eq!(state.total_duration_secs(), 10.0);
     }
 }
+

@@ -214,3 +214,4 @@ mod tests {
         assert_eq!(*fsm.state(), PlaybackState::Buffering { track_id: 1, target_position_secs: 0.0 });
     }
 }
+
