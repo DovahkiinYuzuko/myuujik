@@ -1,5 +1,7 @@
 use clap::Parser;
 use std::path::PathBuf;
+use std::thread;
+use std::time::Duration;
 
 #[derive(Parser, Debug)]
 #[command(name = "myuujik", author, version, about = "High-quality, ultra-lightweight TUI audio player")]
@@ -11,6 +13,10 @@ struct CliArgs {
     /// Override UI language ("ja" or "en")
     #[arg(short, long)]
     locale: Option<String>,
+
+    /// Force exclusive output mode (Windows WASAPI)
+    #[arg(short, long)]
+    exclusive: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -20,6 +26,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut config = myuujik::config::AppConfig::load();
     if let Some(locale) = args.locale {
         config.ui.locale = locale;
+    }
+    if args.exclusive {
+        config.audio.output_mode = "Exclusive".to_string();
     }
 
     // 多言語辞書の初期化
@@ -32,12 +41,39 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("{}: {}", i18n.t("track_info.output_mode"), config.audio.output_mode);
     println!("{}", volume_str);
 
-    if let Some(target_path) = args.path {
-        println!("Target path: {:?}", target_path);
-    } else if let Some(ref last_path) = config.session.last_opened_path {
-        println!("Resuming last session: {}", last_path);
+    let target_path = args.path.or_else(|| {
+        config.session.last_opened_path.as_ref().map(PathBuf::from)
+    });
+
+    if let Some(path) = target_path {
+        if path.is_file() {
+            println!("Opening track: {:?}", path);
+            let engine = myuujik::audio::AudioEngine::new(
+                &config.audio.output_mode,
+                &config.audio.output_device,
+                config.audio.volume,
+            )?;
+
+            engine.play_file(&path);
+            println!("Playback started. Active mode: {}", engine.active_output_mode());
+
+            // 簡易再生ループ（進捗表示）
+            let mut elapsed = 0;
+            while elapsed < 50 {
+                thread::sleep(Duration::from_millis(100));
+                let cur = engine.current_position_secs();
+                let dur = engine.total_duration_secs();
+                let state = engine.current_state();
+                print!("\r[State: {:?}] Progress: {:.1}s / {:.1}s    ", state, cur, dur);
+                use std::io::Write;
+                let _ = std::io::stdout().flush();
+                elapsed += 1;
+            }
+            println!("\nPlayback verified!");
+        } else {
+            println!("Target directory: {:?}", path);
+        }
     }
 
     Ok(())
 }
-

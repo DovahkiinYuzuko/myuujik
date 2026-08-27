@@ -171,9 +171,8 @@ impl AudioEngine {
                                     shared_state.total_samples.store(total_frames, Ordering::Relaxed);
                                 }
 
-                                // SPSCリングバッファの再初期化
+                                // SPSCリングバッファの構築
                                 let (new_prod, new_cons) = rtrb::RingBuffer::new(RING_BUFFER_SIZE);
-                                producer = Some(new_prod);
 
                                 // バックエンドの構築
                                 let b_res = Self::init_backend(
@@ -189,9 +188,10 @@ impl AudioEngine {
                                 );
 
                                 match b_res {
-                                    Ok(mut b) => {
+                                    Ok((mut b, used_prod)) => {
                                         let _ = b.play();
                                         backend = Some(b);
+                                        producer = Some(used_prod.unwrap_or(new_prod));
                                         decoder = Some(dec);
                                         shared_state.is_playing.store(true, Ordering::Relaxed);
                                         fsm.write().unwrap().transition(PlaybackEvent::BufferReady);
@@ -305,7 +305,7 @@ impl AudioEngine {
         state: Arc<SharedAudioState>,
         is_fallback: &Arc<AtomicBool>,
         active_mode: &Arc<RwLock<String>>,
-    ) -> Result<Box<dyn AudioOutputBackend>, Box<dyn Error + Send + Sync>> {
+    ) -> Result<(Box<dyn AudioOutputBackend>, Option<rtrb::Producer<f32>>), Box<dyn Error + Send + Sync>> {
         if mode == "Exclusive" && ExclusiveBackend::is_supported() {
             let res = ExclusiveBackend::create(
                 device_name,
@@ -320,21 +320,22 @@ impl AudioEngine {
                 Ok(b) => {
                     is_fallback.store(false, Ordering::Relaxed);
                     *active_mode.write().unwrap() = "Exclusive (Bit-Perfect)".to_string();
-                    return Ok(Box::new(b));
+                    return Ok((Box::new(b), None));
                 }
                 Err(_) => {
-                    // Shared Mode へ自動フォールバック
+                    // Shared Mode へ自動フォールバック（新リングバッファを生成して接続）
                     is_fallback.store(true, Ordering::Relaxed);
                     *active_mode.write().unwrap() = "Shared (Fallback)".to_string();
+                    let (p_fb, c_fb) = rtrb::RingBuffer::new(96_000);
+                    let shared = SharedBackend::create(device_name, sample_rate, channels, c_fb, state)?;
+                    return Ok((Box::new(shared), Some(p_fb)));
                 }
             }
         }
 
         // SharedBackend の構築
-        let (p, c) = rtrb::RingBuffer::new(48000);
-        let _ = p; // consumer は上書き
-        let shared = SharedBackend::create(device_name, sample_rate, channels, c, state)?;
-        Ok(Box::new(shared))
+        let shared = SharedBackend::create(device_name, sample_rate, channels, consumer, state)?;
+        Ok((Box::new(shared), None))
     }
 }
 
