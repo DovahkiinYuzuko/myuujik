@@ -1,0 +1,66 @@
+{
+  "language_name": "English",
+  "app": {
+    "title": "myuujik",
+    "subtitle": "High Quality & Ultra-Lightweight TUI Audio Player",
+    "mode_shared": "Shared",
+    "mode_shared_fallback": "Shared (Fallback)",
+    "mode_exclusive": "Exclusive (Bit-Perfect)",
+    "bit_perfect_locked": "LOCKED (Bit-Perfect)",
+    "status_playing": "Playing",
+    "status_paused": "Paused",
+    "status_stopped": "Stopped",
+    "status_buffering": "Buffering",
+    "status_seeking": "Seeking",
+    "status_error": "Error"
+  },
+  "playlist": {
+    "header": "Playlist",
+    "empty": "No playable tracks found. Please specify a file or folder.",
+    "scanning": "Scanning files...",
+    "total_tracks": "Total {count} tracks",
+    "selected": "Selected: {index}/{total}"
+  },
+  "track_info": {
+    "header": "Track Information",
+    "title": "Title",
+    "artist": "Artist",
+    "album": "Album",
+    "codec": "Codec",
+    "sample_rate": "Sample Rate",
+    "bit_depth": "Bit Depth",
+    "channels": "Channels",
+    "bitrate": "Bitrate",
+    "duration": "Duration",
+    "file_path": "File Path",
+    "output_mode": "Output Mode",
+    "unknown": "Unknown"
+  },
+  "controls": {
+    "header": "Playback Controls",
+    "volume": "Volume: {val}%",
+    "progress": "Progress",
+    "repeat_none": "Repeat: OFF",
+    "repeat_all": "Repeat: All",
+    "repeat_single": "Repeat: Single",
+    "shuffle_on": "Shuffle: ON",
+    "shuffle_off": "Shuffle: OFF"
+  },
+  "help": {
+    "space": "Space: Play/Pause",
+    "arrows": "↑/↓: Select  ←/→: ±5s Seek",
+    "enter": "Enter: Play",
+    "volume": "[ / ]: Volume",
+    "repeat": "r: Repeat Mode",
+    "shuffle": "s: Shuffle",
+    "mode": "e: Output Mode",
+    "quit": "q / Esc: Quit"
+  },
+  "errors": {
+    "exclusive_failed": "Failed to initialize Exclusive mode. Falling back to Shared mode.",
+    "unsupported_format": "Unsupported audio format: {path}",
+    "device_lost": "Output audio device was disconnected.",
+    "file_not_found": "Specified file not found: {path}",
+    "decode_error": "Error occurred during decode: {error}"
+  }
+}

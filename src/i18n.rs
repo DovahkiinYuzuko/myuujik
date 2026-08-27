@@ -128,4 +128,3 @@ mod tests {
         assert_eq!(formatted_en, "Total 42 tracks");
     }
 }
-
