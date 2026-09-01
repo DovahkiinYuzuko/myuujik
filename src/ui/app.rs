@@ -112,6 +112,21 @@ impl App {
 
     pub fn play_current_selected(&mut self) {
         let cursor = self.playlist.cursor();
+        if let Some(entry) = self.playlist.entries().get(cursor) {
+            if let Some(audio) = entry.audio_item() {
+                if self.playlist.current_track_path() == Some(&audio.path) {
+                    match self.engine.current_state() {
+                        PlaybackState::Playing => return, // すでに再生中なら何もしない（頭出しリセット防止）
+                        PlaybackState::Paused => {
+                            self.engine.resume();
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
         if let Some(track) = self.playlist.select_and_play_entry(cursor).cloned() {
             if let Ok(decoder) = AudioDecoder::open(&track.path) {
                 let meta = decoder.metadata().clone();

@@ -68,7 +68,10 @@ impl PlaylistManager {
         self.all_tracks = raw_paths
             .into_iter()
             .enumerate()
-            .map(|(idx, p)| PlaylistItem::from_path(idx, p))
+            .map(|(idx, p)| {
+                let canonical = std::fs::canonicalize(&p).unwrap_or(p);
+                PlaylistItem::from_path(idx, canonical)
+            })
             .collect();
 
         self.cursor = 0;
@@ -102,7 +105,8 @@ impl PlaylistManager {
             }
 
             for (idx, f) in audio_files.into_iter().enumerate() {
-                let item = PlaylistItem::from_path(idx, f);
+                let canonical = std::fs::canonicalize(&f).unwrap_or(f);
+                let item = PlaylistItem::from_path(idx, canonical);
                 self.items.push(item.clone());
                 self.entries.push(PlaylistEntry::AudioFile(item));
             }
