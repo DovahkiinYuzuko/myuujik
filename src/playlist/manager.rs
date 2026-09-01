@@ -137,15 +137,15 @@ impl PlaylistManager {
         if let (Some(ref current), Some(ref root)) = (&self.current_dir, &self.root_path) {
             let root_name = root.file_name().and_then(|s| s.to_str()).unwrap_or("root");
             if current == root {
-                format!("📁 {}", root_name)
+                format!("> {}", root_name)
             } else if let Ok(rel) = current.strip_prefix(root) {
                 let rel_str = rel.to_string_lossy().replace('\\', " / ");
-                format!("📁 {} / {}", root_name, rel_str)
+                format!("> {} / {}", root_name, rel_str)
             } else {
-                format!("📁 {}", current.file_name().and_then(|s| s.to_str()).unwrap_or("folder"))
+                format!("> {}", current.file_name().and_then(|s| s.to_str()).unwrap_or("folder"))
             }
         } else {
-            "📁 [No directory]".to_string()
+            "> [No directory]".to_string()
         }
     }
 
