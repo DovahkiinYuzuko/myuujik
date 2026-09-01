@@ -299,48 +299,13 @@ impl App {
             }
 
             if self.engine.current_state() == PlaybackState::Playing {
-                let pos = self.engine.current_position_secs();
-                let len = self.waveform_points.len();
-
-                match self.visualizer_mode {
-                    VisualizerMode::Type4 => {
-                        // WAVE (オシロスコープ波形): 前回の滑らかな連続多重サイン波
-                        for i in 0..len {
-                            let t = pos * 8.0 + (i as f64 * 0.35);
-                            let val = ((t.sin() * 0.4 + (t * 2.3).sin() * 0.3 + 0.5).abs() as f32).clamp(0.05, 1.0);
-                            self.waveform_points[i] = val;
-                        }
-                    }
-                    VisualizerMode::Type3 | VisualizerMode::Type3Polar => {
-                        // METER / CIRCLE: 周波数・角度固定のビート同期スペクトラム
-                        // キックドラム (約0.5秒周期のビートパルス)
-                        let kick_phase = (pos * 2.2).fract();
-                        let kick_impulse = (1.0 - kick_phase * 3.5).max(0.0) as f32;
-
-                        for i in 0..len {
-                            let norm = i as f32 / len as f32;
-                            // 角度・X座標 i は完全固定。pos による位相回転加算を一切排除。
-                            let target = if norm < 0.22 {
-                                // 低音域: キックビートで垂直に跳ねる
-                                (0.15 + kick_impulse * (1.0 - norm * 3.5) * 0.85).clamp(0.05, 1.0)
-                            } else if norm < 0.65 {
-                                // 中音域: ボーカル・スネア帯域（場所固定で振幅）
-                                let mid_base = 0.25 + 0.15 * (norm * 12.0).sin().abs();
-                                (mid_base + kick_impulse * 0.25).clamp(0.05, 0.8)
-                            } else {
-                                // 高音域: ハイハット（場所固定で細かく反応）
-                                let hi_base = 0.1 + 0.1 * (norm * 20.0).cos().abs();
-                                let hi_tick = if (pos * 8.8).fract() < 0.2 { 0.3 } else { 0.0 };
-                                (hi_base + hi_tick).clamp(0.05, 0.6)
-                            };
-
-                            let cur = self.waveform_points[i];
-                            if target > cur {
-                                self.waveform_points[i] = target;
-                            } else {
-                                self.waveform_points[i] = (cur * 0.82).max(0.02);
-                            }
-                        }
+                // 本物の再生中PCMサンプルから直接波形データを取得
+                let raw_points = self.engine.get_waveform_points(self.waveform_points.len());
+                for (cur, &new_val) in self.waveform_points.iter_mut().zip(raw_points.iter()) {
+                    if new_val > *cur {
+                        *cur = new_val;
+                    } else {
+                        *cur = (*cur * 0.82 + new_val * 0.18).max(0.01);
                     }
                 }
             } else {

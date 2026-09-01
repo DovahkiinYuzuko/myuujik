@@ -144,20 +144,26 @@ impl<'a> Widget for ControlsView<'a> {
         if chunks[2].height > 0 && chunks[2].width > 0 {
             match self.visualizer_mode {
                 VisualizerMode::Type3 => {
-                    // METER: Unicode ブロック文字による複数行バーグラフ (底辺接地・高さフル活用)
+                    // METER: 等幅スペーシング（バー1列：スペース1列）による複数行バーグラフ (底辺接地)
                     let blocks = [' ', ' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
                     let width = chunks[2].width as usize;
                     let height = chunks[2].height as usize;
 
                     let mut lines = Vec::with_capacity(height);
                     for row in 0..height {
-                        // row 0 が一番上、row (height - 1) が一番下 (底辺接地)
                         let bottom_up = height - 1 - row;
                         let mut line_chars = String::with_capacity(width);
 
                         for col in 0..width {
-                            let val = if col < self.waveform_points.len() {
-                                self.waveform_points[col].clamp(0.0, 1.0)
+                            // 等幅スペーシング: 偶数列がバー、奇数列がスペース（間にバー1個分の隙間）
+                            if col % 2 == 1 {
+                                line_chars.push(' ');
+                                continue;
+                            }
+
+                            let bar_idx = col / 2;
+                            let val = if bar_idx < self.waveform_points.len() {
+                                self.waveform_points[bar_idx].clamp(0.0, 1.0)
                             } else {
                                 0.0
                             };
@@ -187,7 +193,7 @@ impl<'a> Widget for ControlsView<'a> {
                     Paragraph::new(lines).render(chunks[2], buf);
                 }
                 VisualizerMode::Type4 => {
-                    // Type 4: 波状の音量メーター (スパークライン波形)
+                    // WAVE: 生のPCM連続波形 (スパークライン)
                     let spark_data: Vec<u64> = self
                         .waveform_points
                         .iter()
@@ -200,11 +206,12 @@ impl<'a> Widget for ControlsView<'a> {
                     sparkline.render(chunks[2], buf);
                 }
                 VisualizerMode::Type3Polar => {
-                    // Type 3 極座標変換 (Ratatui Canvas 点字 Braille による円形サークル波形)
-                    let points_count = 48.min(self.waveform_points.len()).max(16);
-                    let mut lines = Vec::with_capacity(points_count);
-                    let r_inner = 16.0f64;
+                    // CIRCLE: 太線トリプルライン＆高密度放射サークル波形 (ハゲウニ解消)
+                    let points_count = 64.min(self.waveform_points.len()).max(24);
+                    let mut lines = Vec::with_capacity(points_count * 3);
+                    let r_inner = 15.0f64;
                     let r_max = 38.0f64;
+                    let delta_angle = 0.022f64;
 
                     for i in 0..points_count {
                         let val = if i < self.waveform_points.len() {
@@ -212,19 +219,22 @@ impl<'a> Widget for ControlsView<'a> {
                         } else {
                             0.0
                         };
-                        let angle = (i as f64 / points_count as f64) * std::f64::consts::TAU - std::f64::consts::FRAC_PI_2;
+                        let base_angle = (i as f64 / points_count as f64) * std::f64::consts::TAU - std::f64::consts::FRAC_PI_2;
                         let r1 = r_inner;
                         let r2 = r_inner + val * (r_max - r_inner);
 
-                        let cos_a = angle.cos();
-                        let sin_a = angle.sin();
-
-                        lines.push((
-                            cos_a * r1,
-                            sin_a * r1,
-                            cos_a * r2,
-                            sin_a * r2,
-                        ));
+                        // 3本の近接ラインでバーの太さを強化
+                        for &offset in &[-delta_angle, 0.0, delta_angle] {
+                            let angle = base_angle + offset;
+                            let cos_a = angle.cos();
+                            let sin_a = angle.sin();
+                            lines.push((
+                                cos_a * r1,
+                                sin_a * r1,
+                                cos_a * r2,
+                                sin_a * r2,
+                            ));
+                        }
                     }
 
                     let canvas = Canvas::default()
