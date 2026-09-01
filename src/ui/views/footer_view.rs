@@ -26,11 +26,12 @@ impl<'a> Widget for FooterView<'a> {
         let help_label = self.i18n.t("shortcuts.help");
         let quit_label = self.i18n.t("shortcuts.quit");
 
-        let items: [(&str, &str); 6] = [
+        let items: [(&str, &str); 7] = [
             ("Space", "▶/❚❚"),
             ("Enter", &play_label),
             ("Shift+↑/↓, +/-", &vol_label),
             ("←/→", "±5s"),
+            ("v", "Visual"),
             ("?", &help_label),
             ("q", &quit_label),
         ];

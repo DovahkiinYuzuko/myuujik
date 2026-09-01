@@ -1,3 +1,4 @@
+use crate::audio::visualizer::VisualizerMode;
 use crate::fsm::playback_fsm::PlaybackState;
 use crate::i18n::I18n;
 use crate::playlist::manager::RepeatMode;
@@ -6,6 +7,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use ratatui::widgets::canvas::{Canvas, Circle, Line as CanvasLine};
 use ratatui::widgets::{Block, Borders, Gauge, Paragraph, Sparkline, Widget};
 
 pub struct ControlsView<'a> {
@@ -16,6 +18,7 @@ pub struct ControlsView<'a> {
     pub repeat_mode: RepeatMode,
     pub is_shuffle: bool,
     pub is_focused: bool,
+    pub visualizer_mode: VisualizerMode,
     pub waveform_points: &'a [f32],
     pub i18n: &'a I18n,
     pub theme: &'a Theme,
@@ -127,24 +130,104 @@ impl<'a> Widget for ControlsView<'a> {
                 format!(" [ {} ] ", vol_str),
                 Style::default().fg(self.theme.primary).bg(Color::Rgb(15, 25, 45)).add_modifier(Modifier::BOLD),
             ),
+            Span::raw(" "),
+            Span::styled(
+                format!(" [ {} ] ", self.visualizer_mode.display_name()),
+                Style::default().fg(Color::Rgb(56, 189, 248)).bg(Color::Rgb(20, 28, 45)).add_modifier(Modifier::BOLD),
+            ),
         ];
 
         let status_para = Paragraph::new(Line::from(status_spans)).style(Style::default().bg(self.theme.bg_card));
         status_para.render(chunks[1], buf);
 
-        // 3. リアルタイム波形スパークライン
-        if chunks[2].height > 0 {
-            let spark_data: Vec<u64> = self
-                .waveform_points
-                .iter()
-                .map(|&p| (p * 100.0).clamp(0.0, 100.0) as u64)
-                .collect();
+        // 3. ビジュアライザ描画 (AviUtl Type 3 / Type 4 / Type 3 Polar)
+        if chunks[2].height > 0 && chunks[2].width > 0 {
+            match self.visualizer_mode {
+                VisualizerMode::Type3 => {
+                    // Type 3: 音量メーター (Unicode ブロック文字)
+                    let blocks = [' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+                    let width = chunks[2].width as usize;
+                    let mut line_chars = String::with_capacity(width);
+                    for i in 0..width {
+                        let val = if i < self.waveform_points.len() {
+                            self.waveform_points[i]
+                        } else {
+                            0.0
+                        };
+                        let idx = ((val * (blocks.len() - 1) as f32).round() as usize).min(blocks.len() - 1);
+                        line_chars.push(blocks[idx]);
+                    }
+                    let meter_line = Line::from(Span::styled(
+                        line_chars,
+                        Style::default().fg(Color::Rgb(56, 189, 248)).bg(self.theme.bg_card).add_modifier(Modifier::BOLD),
+                    ));
+                    Paragraph::new(meter_line).render(chunks[2], buf);
+                }
+                VisualizerMode::Type4 => {
+                    // Type 4: 波状の音量メーター (スパークライン波形)
+                    let spark_data: Vec<u64> = self
+                        .waveform_points
+                        .iter()
+                        .map(|&p| (p * 100.0).clamp(0.0, 100.0) as u64)
+                        .collect();
+                    let sparkline = Sparkline::default()
+                        .style(Style::default().fg(Color::Rgb(56, 189, 248)).bg(self.theme.bg_card))
+                        .data(&spark_data)
+                        .max(100);
+                    sparkline.render(chunks[2], buf);
+                }
+                VisualizerMode::Type3Polar => {
+                    // Type 3 極座標変換 (Ratatui Canvas 点字 Braille による円形サークル波形)
+                    let points_count = 48.min(self.waveform_points.len()).max(16);
+                    let mut lines = Vec::with_capacity(points_count);
+                    let r_inner = 16.0f64;
+                    let r_max = 38.0f64;
 
-            let sparkline = Sparkline::default()
-                .style(Style::default().fg(self.theme.primary).bg(self.theme.bg_card))
-                .data(&spark_data)
-                .max(100);
-            sparkline.render(chunks[2], buf);
+                    for i in 0..points_count {
+                        let val = if i < self.waveform_points.len() {
+                            self.waveform_points[i] as f64
+                        } else {
+                            0.0
+                        };
+                        let angle = (i as f64 / points_count as f64) * std::f64::consts::TAU - std::f64::consts::FRAC_PI_2;
+                        let r1 = r_inner;
+                        let r2 = r_inner + val * (r_max - r_inner);
+
+                        let cos_a = angle.cos();
+                        let sin_a = angle.sin();
+
+                        lines.push((
+                            cos_a * r1,
+                            sin_a * r1,
+                            cos_a * r2,
+                            sin_a * r2,
+                        ));
+                    }
+
+                    let canvas = Canvas::default()
+                        .block(Block::default().style(Style::default().bg(self.theme.bg_card)))
+                        .x_bounds([-45.0, 45.0])
+                        .y_bounds([-45.0, 45.0])
+                        .paint(move |ctx| {
+                            ctx.draw(&Circle {
+                                x: 0.0,
+                                y: 0.0,
+                                radius: r_inner,
+                                color: Color::Rgb(56, 189, 248),
+                            });
+                            for &(x1, y1, x2, y2) in &lines {
+                                ctx.draw(&CanvasLine {
+                                    x1,
+                                    y1,
+                                    x2,
+                                    y2,
+                                    color: Color::White,
+                                });
+                            }
+                        });
+                    canvas.render(chunks[2], buf);
+                }
+            }
         }
     }
 }

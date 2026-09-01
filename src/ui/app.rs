@@ -2,7 +2,7 @@ use crate::audio::decoder::{AudioDecoder, TrackMetadata};
 use crate::audio::engine::AudioEngine;
 use crate::audio::shared::SharedBackend;
 use crate::audio::traits::AudioDeviceInfo;
-use crate::audio::visualizer::WaveformAnalyzer;
+use crate::audio::visualizer::{VisualizerMode, WaveformAnalyzer};
 use crate::config::AppConfig;
 use crate::fsm::playback_fsm::PlaybackState;
 use crate::fsm::ui_hfsm::{ModalState, UiHfsm, UiPane};
@@ -32,6 +32,7 @@ pub struct App {
     pub cover_widget: CoverArtWidget,
     pub waveform_analyzer: WaveformAnalyzer,
     pub waveform_points: Vec<f32>,
+    pub visualizer_mode: VisualizerMode,
     pub available_devices: Vec<AudioDeviceInfo>,
     pub device_modal_idx: usize,
     pub error_message: Option<String>,
@@ -71,6 +72,7 @@ impl App {
             cover_widget: CoverArtWidget::new(),
             waveform_analyzer: WaveformAnalyzer::new(2048),
             waveform_points: vec![0.0; 48],
+            visualizer_mode: VisualizerMode::default(),
             available_devices,
             device_modal_idx: 0,
             error_message: None,
@@ -253,6 +255,9 @@ impl App {
             KeyCode::Char('p') => {
                 self.play_prev_track();
             }
+            KeyCode::Char('v') | KeyCode::Char('V') => {
+                self.visualizer_mode = self.visualizer_mode.next();
+            }
             _ => {}
         }
     }
@@ -285,16 +290,46 @@ impl App {
 
             // リアルタイム波形データの更新
             frame_count = frame_count.wrapping_add(1);
+            if let Ok(term_size) = terminal.size() {
+                let right_width = (term_size.width as f32 * 0.62).round() as usize;
+                let target_len = right_width.saturating_sub(4).clamp(16, 128);
+                if self.waveform_points.len() != target_len {
+                    self.waveform_points.resize(target_len, 0.0);
+                }
+            }
+
             if self.engine.current_state() == PlaybackState::Playing {
                 let pos = self.engine.current_position_secs();
-                let points_count = 48;
-                for i in 0..points_count {
-                    let t = pos * 8.0 + (i as f64 * 0.35);
-                    let val = ((t.sin() * 0.4 + (t * 2.3).sin() * 0.3 + 0.5).abs() as f32).clamp(0.05, 1.0);
-                    self.waveform_points[i] = val;
+                let kick_phase = (pos * 2.0).fract();
+                let kick_impulse = (1.0 - kick_phase * 3.0).max(0.0) as f32;
+
+                let len = self.waveform_points.len();
+                for i in 0..len {
+                    let norm = i as f32 / len as f32;
+                    let target = if norm < 0.25 {
+                        // 低音域: キックドラムで垂直に跳ねる
+                        (0.15 + kick_impulse * (1.0 - norm * 3.0) * 0.85).min(1.0)
+                    } else if norm < 0.65 {
+                        // 中音域: ボーカル・スネア帯域のうねり
+                        let wave = ((pos * 4.5 + i as f64 * 0.7).sin() * 0.2 + 0.35) as f32;
+                        (wave * (0.6 + kick_impulse * 0.4)).min(1.0)
+                    } else {
+                        // 高音域: ハイハットの細かな刻み
+                        let hi_tick = if (pos * 8.0).fract() < 0.25 { 0.4 } else { 0.05 };
+                        (hi_tick + ((i * 13) % 7) as f32 * 0.06).min(1.0)
+                    };
+
+                    let cur = self.waveform_points[i];
+                    if target > cur {
+                        self.waveform_points[i] = target;
+                    } else {
+                        self.waveform_points[i] = (cur * 0.82).max(0.02);
+                    }
                 }
             } else {
-                self.waveform_points.fill(0.0);
+                for p in &mut self.waveform_points {
+                    *p *= 0.8;
+                }
             }
 
             terminal.draw(|f| {
@@ -369,6 +404,7 @@ impl App {
                     repeat_mode: self.playlist.repeat_mode(),
                     is_shuffle: self.playlist.is_shuffle(),
                     is_focused: active_pane == UiPane::Controls,
+                    visualizer_mode: self.visualizer_mode,
                     waveform_points: &self.waveform_points,
                     i18n: &self.i18n,
                     theme: &self.theme,
