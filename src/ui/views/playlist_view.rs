@@ -77,7 +77,7 @@ impl<'a> Widget for PlaylistView<'a> {
             return;
         }
 
-        let current_track_path = self.playlist.current_track().map(|t| &t.path);
+        let current_track_path = self.playlist.current_track_path();
         let cursor_idx = self.playlist.cursor();
         let ticker = MarqueeTicker::default();
 

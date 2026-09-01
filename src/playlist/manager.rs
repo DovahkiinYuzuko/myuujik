@@ -17,8 +17,10 @@ pub struct PlaylistManager {
     current_dir: Option<PathBuf>,
     entries: Vec<PlaylistEntry>,
     items: Vec<PlaylistItem>,
+    all_tracks: Vec<PlaylistItem>,
     cursor: usize,
     current_playing_index: Option<usize>,
+    current_playing_path: Option<PathBuf>,
     repeat_mode: RepeatMode,
     shuffle_enabled: bool,
     shuffle_indices: Vec<usize>,
@@ -32,8 +34,10 @@ impl PlaylistManager {
             current_dir: None,
             entries: Vec::new(),
             items: Vec::new(),
+            all_tracks: Vec::new(),
             cursor: 0,
             current_playing_index: None,
+            current_playing_path: None,
             repeat_mode: RepeatMode::Off,
             shuffle_enabled: false,
             shuffle_indices: Vec::new(),
@@ -49,19 +53,30 @@ impl PlaylistManager {
 
         let abs_path = std::fs::canonicalize(path_ref).unwrap_or_else(|_| path_ref.to_path_buf());
 
-        if abs_path.is_file() {
+        let scan_target = if abs_path.is_file() {
             let parent = abs_path.parent().unwrap_or(&abs_path).to_path_buf();
             self.root_path = Some(parent.clone());
-            self.current_dir = Some(parent);
+            self.current_dir = Some(parent.clone());
+            parent
         } else {
             self.root_path = Some(abs_path.clone());
-            self.current_dir = Some(abs_path);
-        }
+            self.current_dir = Some(abs_path.clone());
+            abs_path
+        };
+
+        let raw_paths = AudioScanner::scan_path(&scan_target);
+        self.all_tracks = raw_paths
+            .into_iter()
+            .enumerate()
+            .map(|(idx, p)| PlaylistItem::from_path(idx, p))
+            .collect();
 
         self.cursor = 0;
         self.current_playing_index = None;
+        self.current_playing_path = None;
+        self.rebuild_shuffle_indices();
         self.refresh_entries();
-        self.items.len()
+        self.all_tracks.len()
     }
 
     pub fn refresh_entries(&mut self) {
@@ -93,7 +108,7 @@ impl PlaylistManager {
             }
         }
 
-        self.rebuild_shuffle_indices();
+        self.sync_current_index_with_items();
 
         if !self.entries.is_empty() {
             if self.cursor >= self.entries.len() {
@@ -101,6 +116,14 @@ impl PlaylistManager {
             }
         } else {
             self.cursor = 0;
+        }
+    }
+
+    fn sync_current_index_with_items(&mut self) {
+        if let Some(ref path) = self.current_playing_path {
+            self.current_playing_index = self.items.iter().position(|it| &it.path == path);
+        } else {
+            self.current_playing_index = None;
         }
     }
 
@@ -208,33 +231,55 @@ impl PlaylistManager {
     }
 
     pub fn current_track(&self) -> Option<&PlaylistItem> {
-        self.current_playing_index.and_then(|idx| self.items.get(idx))
+        if let Some(ref path) = self.current_playing_path {
+            self.all_tracks.iter().find(|t| &t.path == path)
+        } else {
+            None
+        }
+    }
+
+    pub fn current_track_path(&self) -> Option<&PathBuf> {
+        self.current_playing_path.as_ref()
+    }
+
+    pub fn all_tracks(&self) -> &[PlaylistItem] {
+        &self.all_tracks
     }
 
     pub fn current_playing_index(&self) -> Option<usize> {
         self.current_playing_index
     }
 
-    pub fn select_and_play(&mut self, index: usize) -> Option<&PlaylistItem> {
-        if index < self.items.len() {
-            self.current_playing_index = Some(index);
-            let target_path = self.items[index].path.clone();
-            if let Some(entry_idx) = self.entries.iter().position(|e| match e {
-                PlaylistEntry::AudioFile(it) => it.path == target_path,
-                _ => false,
-            }) {
-                self.cursor = entry_idx;
-            }
+    pub fn select_and_play_path(&mut self, path: &Path) -> Option<&PlaylistItem> {
+        let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        self.current_playing_path = Some(canonical.clone());
+        self.sync_current_index_with_items();
 
-            // シャッフル順序の先頭を再生指定曲にして位置をリセット
-            if self.shuffle_enabled {
-                if let Some(pos) = self.shuffle_indices.iter().position(|&idx| idx == index) {
+        // カレントエントリ内に存在すればカーソルを合わせる
+        if let Some(entry_idx) = self.entries.iter().position(|e| match e {
+            PlaylistEntry::AudioFile(it) => it.path == canonical,
+            _ => false,
+        }) {
+            self.cursor = entry_idx;
+        }
+
+        // シャッフル先頭を現在曲にしてリセット
+        if self.shuffle_enabled {
+            if let Some(track_idx) = self.all_tracks.iter().position(|t| t.path == canonical) {
+                if let Some(pos) = self.shuffle_indices.iter().position(|&idx| idx == track_idx) {
                     self.shuffle_indices.swap(0, pos);
                     self.shuffle_pos = 0;
                 }
             }
+        }
 
-            self.items.get(index)
+        self.all_tracks.iter().find(|t| t.path == canonical)
+    }
+
+    pub fn select_and_play(&mut self, index: usize) -> Option<&PlaylistItem> {
+        if index < self.items.len() {
+            let path = self.items[index].path.clone();
+            self.select_and_play_path(&path)
         } else {
             None
         }
@@ -244,23 +289,21 @@ impl PlaylistManager {
         if entry_idx < self.entries.len() {
             self.cursor = entry_idx;
             if let Some(audio) = self.entries[entry_idx].audio_item() {
-                let target_path = audio.path.clone();
-                if let Some(item_idx) = self.items.iter().position(|it| it.path == target_path) {
-                    return self.select_and_play(item_idx);
-                }
+                let path = audio.path.clone();
+                return self.select_and_play_path(&path);
             }
         }
         None
     }
 
     pub fn next_track(&mut self) -> Option<&PlaylistItem> {
-        if self.items.is_empty() {
+        if self.all_tracks.is_empty() {
             return None;
         }
 
         if self.repeat_mode == RepeatMode::Single {
-            if let Some(idx) = self.current_playing_index {
-                return self.items.get(idx);
+            if let Some(ref path) = self.current_playing_path {
+                return self.all_tracks.iter().find(|t| &t.path == path);
             }
         }
 
@@ -268,41 +311,47 @@ impl PlaylistManager {
             if self.shuffle_pos + 1 < self.shuffle_indices.len() {
                 self.shuffle_pos += 1;
                 let next_idx = self.shuffle_indices[self.shuffle_pos];
-                self.current_playing_index = Some(next_idx);
-                self.cursor = next_idx;
-                return self.items.get(next_idx);
+                let path = self.all_tracks[next_idx].path.clone();
+                return self.select_and_play_path(&path);
             } else if self.repeat_mode == RepeatMode::All {
                 self.reshuffle();
                 let next_idx = self.shuffle_indices[0];
-                self.current_playing_index = Some(next_idx);
-                self.cursor = next_idx;
-                return self.items.get(next_idx);
+                let path = self.all_tracks[next_idx].path.clone();
+                return self.select_and_play_path(&path);
             } else {
+                self.current_playing_path = None;
+                self.current_playing_index = None;
                 return None;
             }
         }
 
-        // 通常順再生
-        let next_idx = match self.current_playing_index {
+        // 通常順再生（カーナビ式：フォルダ跨ぎ連続再生）
+        let current_pos = self.current_playing_path.as_ref().and_then(|p| {
+            self.all_tracks.iter().position(|t| &t.path == p)
+        });
+
+        let next_idx = match current_pos {
             Some(curr) => {
-                if curr + 1 < self.items.len() {
+                if curr + 1 < self.all_tracks.len() {
                     curr + 1
                 } else if self.repeat_mode == RepeatMode::All {
                     0
                 } else {
+                    // RepeatMode::Off: 全曲の終端で完全停止！
+                    self.current_playing_path = None;
+                    self.current_playing_index = None;
                     return None;
                 }
             }
             None => 0,
         };
 
-        self.current_playing_index = Some(next_idx);
-        self.cursor = next_idx;
-        self.items.get(next_idx)
+        let path = self.all_tracks[next_idx].path.clone();
+        self.select_and_play_path(&path)
     }
 
     pub fn prev_track(&mut self) -> Option<&PlaylistItem> {
-        if self.items.is_empty() {
+        if self.all_tracks.is_empty() {
             return None;
         }
 
@@ -310,27 +359,29 @@ impl PlaylistManager {
             if self.shuffle_pos > 0 {
                 self.shuffle_pos -= 1;
                 let prev_idx = self.shuffle_indices[self.shuffle_pos];
-                self.current_playing_index = Some(prev_idx);
-                self.cursor = prev_idx;
-                return self.items.get(prev_idx);
+                let path = self.all_tracks[prev_idx].path.clone();
+                return self.select_and_play_path(&path);
             } else if self.repeat_mode == RepeatMode::All {
                 self.shuffle_pos = self.shuffle_indices.len() - 1;
                 let prev_idx = self.shuffle_indices[self.shuffle_pos];
-                self.current_playing_index = Some(prev_idx);
-                self.cursor = prev_idx;
-                return self.items.get(prev_idx);
+                let path = self.all_tracks[prev_idx].path.clone();
+                return self.select_and_play_path(&path);
             } else {
                 return self.current_track();
             }
         }
 
         // 通常順前曲
-        let prev_idx = match self.current_playing_index {
+        let current_pos = self.current_playing_path.as_ref().and_then(|p| {
+            self.all_tracks.iter().position(|t| &t.path == p)
+        });
+
+        let prev_idx = match current_pos {
             Some(curr) => {
                 if curr > 0 {
                     curr - 1
                 } else if self.repeat_mode == RepeatMode::All {
-                    self.items.len() - 1
+                    self.all_tracks.len() - 1
                 } else {
                     0
                 }
@@ -338,9 +389,8 @@ impl PlaylistManager {
             None => 0,
         };
 
-        self.current_playing_index = Some(prev_idx);
-        self.cursor = prev_idx;
-        self.items.get(prev_idx)
+        let path = self.all_tracks[prev_idx].path.clone();
+        self.select_and_play_path(&path)
     }
 
     pub fn toggle_repeat(&mut self) -> RepeatMode {
@@ -380,7 +430,7 @@ impl PlaylistManager {
     }
 
     fn rebuild_shuffle_indices(&mut self) {
-        self.shuffle_indices = (0..self.items.len()).collect();
+        self.shuffle_indices = (0..self.all_tracks.len()).collect();
         if self.shuffle_enabled {
             self.reshuffle();
         }
@@ -410,7 +460,7 @@ mod tests {
 
         let count = pm.load_path("sample");
         if count >= 3 {
-            assert!(pm.len() >= count);
+            assert!(pm.len() > 0);
             assert_eq!(pm.cursor(), 0);
 
             // カーソル移動巡回
@@ -422,23 +472,26 @@ mod tests {
             assert_eq!(pm.cursor(), pm.len() - 1); // ループ
 
             // 再生開始
-            let track0 = pm.select_and_play(0).unwrap();
-            assert_eq!(track0.id, 0);
+            let track0_path = pm.select_and_play(0).unwrap().path.clone();
+            assert_eq!(pm.current_track_path(), Some(&track0_path));
 
-            // RepeatMode::Off の動作（終端でNone）
+            // RepeatMode::Off の動作（全曲終端でNone完全停止）
             pm.set_repeat_mode(RepeatMode::Off);
-            pm.select_and_play(count - 1);
+            let last_path = pm.all_tracks()[count - 1].path.clone();
+            pm.select_and_play_path(&last_path);
             assert!(pm.next_track().is_none());
+            assert_eq!(pm.current_track_path(), None);
 
             // RepeatMode::All の動作（終端で先頭へループ）
             pm.set_repeat_mode(RepeatMode::All);
-            pm.select_and_play(count - 1);
+            pm.select_and_play_path(&last_path);
             let looped = pm.next_track().unwrap();
             assert_eq!(looped.id, 0);
 
             // RepeatMode::Single の動作（次曲でも同じ曲）
             pm.set_repeat_mode(RepeatMode::Single);
-            pm.select_and_play(1);
+            let track1_path = pm.all_tracks()[1].path.clone();
+            pm.select_and_play_path(&track1_path);
             let same = pm.next_track().unwrap();
             assert_eq!(same.id, 1);
 
@@ -448,7 +501,7 @@ mod tests {
             assert!(pm.is_shuffle());
 
             let mut visited = Vec::new();
-            let first = pm.select_and_play(0).unwrap();
+            let first = pm.select_and_play_path(&pm.all_tracks()[0].path.clone()).unwrap();
             visited.push(first.id);
             while let Some(t) = pm.next_track() {
                 visited.push(t.id);
@@ -468,6 +521,11 @@ mod tests {
         let count = pm.load_path("sample");
         assert!(count > 0);
 
+        // 親ディレクトリで1曲目を再生
+        let playing_track = pm.select_and_play(0).unwrap();
+        let playing_path = playing_track.path.clone();
+        assert_eq!(pm.current_track_path(), Some(&playing_path));
+
         // sample 直下に sample-child サブディレクトリがあるはず
         let sub_dir_entry = pm.entries().iter().find(|e| matches!(e, PlaylistEntry::Directory { name, .. } if name.contains("sample-child")));
         if let Some(PlaylistEntry::Directory { path, .. }) = sub_dir_entry {
@@ -476,12 +534,16 @@ mod tests {
             assert!(pm.enter_directory(&child_path));
             assert!(pm.breadcrumb().contains("sample-child"));
 
+            // サブフォルダに入っても、親で再生中の current_track_path は不変！
+            assert_eq!(pm.current_track_path(), Some(&playing_path));
+
             // サブフォルダ内には .. [PARENT DIR] が存在するはず
             assert_eq!(pm.entries().first(), Some(&PlaylistEntry::ParentDir));
 
             // 親フォルダへ戻る
             assert!(pm.go_to_parent());
             assert!(!pm.breadcrumb().contains("sample-child"));
+            assert_eq!(pm.current_track_path(), Some(&playing_path));
 
             // ルートからの脱出防止（ルートで go_to_parent しても false）
             assert!(!pm.go_to_parent());

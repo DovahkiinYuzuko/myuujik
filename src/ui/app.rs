@@ -96,8 +96,15 @@ impl App {
         };
 
         // 初期曲があれば先頭曲を準備して再生開始
-        if !app.playlist.is_empty() {
-            app.play_current_selected();
+        if let Some(track) = app.playlist.all_tracks().first().cloned() {
+            app.playlist.select_and_play_path(&track.path);
+            if let Ok(decoder) = AudioDecoder::open(&track.path) {
+                let meta = decoder.metadata().clone();
+                let cover = decoder.cover_art().cloned();
+                app.current_metadata = Some(meta);
+                app.cover_widget.update_cover_art(&track.path.to_string_lossy(), cover.as_ref());
+            }
+            app.engine.play_file(&track.path);
         }
 
         Ok(app)
