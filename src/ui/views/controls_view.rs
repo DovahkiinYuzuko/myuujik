@@ -204,64 +204,6 @@ impl<'a> Widget for ControlsView<'a> {
                         .max(100);
                     sparkline.render(chunks[2], buf);
                 }
-                VisualizerMode::Type3Polar => {
-                    // CIRCLE: 点字Canvasを全廃し、ブロック文字 (■ / ●) によるソリッドな円形サークル描画
-                    let width = chunks[2].width as usize;
-                    let height = chunks[2].height as usize;
-                    let cx = (width as f64) / 2.0;
-                    let cy = (height as f64) / 2.0;
-
-                    let mut grid = vec![vec![' '; width]; height];
-
-                    // 中心基準点
-                    if (cy as usize) < height && (cx as usize) < width {
-                        grid[cy as usize][cx as usize] = '●';
-                    }
-
-                    let directions = 36;
-                    let r_inner = (height as f64 * 0.25).max(1.0);
-                    let r_max = (height as f64 * 0.85).max(r_inner + 1.0);
-
-                    for i in 0..directions {
-                        let val = if i < self.waveform_points.len() {
-                            self.waveform_points[i] as f64
-                        } else {
-                            0.0
-                        };
-                        let angle = (i as f64 / directions as f64) * std::f64::consts::TAU - std::f64::consts::FRAC_PI_2;
-                        let target_r = r_inner + val * (r_max - r_inner);
-
-                        let cos_a = angle.cos();
-                        let sin_a = angle.sin() * 0.52; // 文字縦横比補正
-
-                        let mut r = r_inner;
-                        while r <= target_r {
-                            let px = (cx + r * cos_a * 2.0).round() as isize;
-                            let py = (cy + r * sin_a).round() as isize;
-
-                            if px >= 0 && (px as usize) < width && py >= 0 && (py as usize) < height {
-                                grid[py as usize][px as usize] = '■';
-                            }
-                            r += 0.6;
-                        }
-                    }
-
-                    let lines: Vec<Line> = grid
-                        .into_iter()
-                        .map(|row_chars| {
-                            let line_str: String = row_chars.into_iter().collect();
-                            Line::from(Span::styled(
-                                line_str,
-                                Style::default()
-                                    .fg(Color::Rgb(56, 189, 248))
-                                    .bg(self.theme.bg_card)
-                                    .add_modifier(Modifier::BOLD),
-                            ))
-                        })
-                        .collect();
-
-                    Paragraph::new(lines).render(chunks[2], buf);
-                }
             }
         }
     }

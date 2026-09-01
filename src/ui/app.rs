@@ -310,8 +310,8 @@ impl App {
                             self.waveform_points[i] = val;
                         }
                     }
-                    VisualizerMode::Type3 | VisualizerMode::Type3Polar => {
-                        // METER / CIRCLE: スピーカー出力直結のゼロレイテンシ本物PCMサンプル
+                    VisualizerMode::Type3 => {
+                        // METER: スピーカー出力直結のゼロレイテンシ本物PCMサンプル
                         let raw_points = self.engine.get_waveform_points(self.waveform_points.len());
                         for (cur, &new_val) in self.waveform_points.iter_mut().zip(raw_points.iter()) {
                             if new_val > *cur {

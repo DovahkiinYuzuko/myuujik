@@ -1,17 +1,15 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum VisualizerMode {
     #[default]
-    Type3,       // AviUtl Type 3: 音量メーター (バーグラフ)
-    Type4,       // AviUtl Type 4: 波状の音量メーター (波状補間曲線)
-    Type3Polar,  // AviUtl Type 3 極座標変換: 円形サークル波形
+    Type3, // AviUtl Type 3: 音量メーター (バーグラフ)
+    Type4, // AviUtl Type 4: 波状の音量メーター (波状補間曲線)
 }
 
 impl VisualizerMode {
     pub fn next(self) -> Self {
         match self {
             VisualizerMode::Type3 => VisualizerMode::Type4,
-            VisualizerMode::Type4 => VisualizerMode::Type3Polar,
-            VisualizerMode::Type3Polar => VisualizerMode::Type3,
+            VisualizerMode::Type4 => VisualizerMode::Type3,
         }
     }
 
@@ -19,7 +17,6 @@ impl VisualizerMode {
         match self {
             VisualizerMode::Type3 => "METER",
             VisualizerMode::Type4 => "WAVE",
-            VisualizerMode::Type3Polar => "CIRCLE",
         }
     }
 }
@@ -153,38 +150,6 @@ impl WaveformAnalyzer {
 
         points
     }
-
-    /// Type 3 極座標変換用に、中心座標 (cx, cy)、内径 r_inner、最大外径 r_max から
-    /// 各放射状ラインの始点・終点座標のリストを算出する。
-    pub fn compute_polar_lines(
-        &self,
-        cx: f64,
-        cy: f64,
-        r_inner: f64,
-        r_max: f64,
-        points_count: usize,
-    ) -> Vec<((f64, f64), (f64, f64))> {
-        let values = self.get_waveform_points(points_count);
-        let mut lines = Vec::with_capacity(points_count);
-
-        for (i, &val) in values.iter().enumerate() {
-            let angle = (i as f64 / points_count as f64) * std::f64::consts::TAU - std::f64::consts::FRAC_PI_2;
-            let r1 = r_inner;
-            let r2 = r_inner + (val as f64) * (r_max - r_inner);
-
-            let cos_a = angle.cos();
-            let sin_a = angle.sin();
-
-            let x1 = cx + cos_a * r1;
-            let y1 = cy + sin_a * r1;
-            let x2 = cx + cos_a * r2;
-            let y2 = cy + sin_a * r2;
-
-            lines.push(((x1, y1), (x2, y2)));
-        }
-
-        lines
-    }
 }
 
 impl Default for WaveformAnalyzer {
@@ -244,33 +209,14 @@ mod tests {
     }
 
     #[test]
-    fn test_waveform_analyzer_compute_polar_lines() {
-        let mut analyzer = WaveformAnalyzer::new(256);
-        let samples = vec![0.5f32; 128];
-        analyzer.push_samples(&samples);
-
-        let lines = analyzer.compute_polar_lines(50.0, 50.0, 10.0, 30.0, 16);
-        assert_eq!(lines.len(), 16);
-        for ((x1, y1), (x2, y2)) in lines {
-            // 内径半径が約10
-            let r1 = ((x1 - 50.0).powi(2) + (y1 - 50.0).powi(2)).sqrt();
-            assert!((r1 - 10.0).abs() < 1e-4);
-            // 外径半径が10〜30の間
-            let r2 = ((x2 - 50.0).powi(2) + (y2 - 50.0).powi(2)).sqrt();
-            assert!(r2 >= 10.0 && r2 <= 30.001);
-        }
-
-        // モードの遷移テスト
+    fn test_visualizer_mode_transition() {
         let mode = VisualizerMode::default();
         assert_eq!(mode, VisualizerMode::Type3);
         assert_eq!(mode.display_name(), "METER");
         let next_mode = mode.next();
         assert_eq!(next_mode, VisualizerMode::Type4);
         assert_eq!(next_mode.display_name(), "WAVE");
-        let polar_mode = next_mode.next();
-        assert_eq!(polar_mode, VisualizerMode::Type3Polar);
-        assert_eq!(polar_mode.display_name(), "CIRCLE");
-        assert_eq!(polar_mode.next(), VisualizerMode::Type3);
+        assert_eq!(next_mode.next(), VisualizerMode::Type3);
     }
 }
 
