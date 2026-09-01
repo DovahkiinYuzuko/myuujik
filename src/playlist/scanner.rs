@@ -44,6 +44,40 @@ impl AudioScanner {
         tracks.sort_by(|a, b| a.to_string_lossy().cmp(&b.to_string_lossy()));
         tracks
     }
+
+    pub fn scan_directory_shallow<P: AsRef<Path>>(dir: P) -> (Vec<PathBuf>, Vec<PathBuf>) {
+        let dir_path = dir.as_ref();
+        if !dir_path.is_dir() {
+            return (Vec::new(), Vec::new());
+        }
+
+        let mut subdirs = Vec::new();
+        let mut audio_files = Vec::new();
+
+        if let Ok(entries) = std::fs::read_dir(dir_path) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let path = entry.path();
+                let file_name = entry.file_name();
+                let name_str = file_name.to_string_lossy();
+
+                // 隠しファイル/フォルダ（.から始まるもの）は除外
+                if name_str.starts_with('.') {
+                    continue;
+                }
+
+                if path.is_dir() {
+                    subdirs.push(path);
+                } else if path.is_file() && Self::is_supported_extension(&path) {
+                    audio_files.push(path);
+                }
+            }
+        }
+
+        subdirs.sort_by(|a, b| a.to_string_lossy().cmp(&b.to_string_lossy()));
+        audio_files.sort_by(|a, b| a.to_string_lossy().cmp(&b.to_string_lossy()));
+
+        (subdirs, audio_files)
+    }
 }
 
 #[cfg(test)]

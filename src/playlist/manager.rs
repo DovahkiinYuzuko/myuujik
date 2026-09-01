@@ -1,8 +1,8 @@
-use crate::playlist::item::PlaylistItem;
+use crate::playlist::item::{PlaylistEntry, PlaylistItem};
 use crate::playlist::scanner::AudioScanner;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepeatMode {
@@ -13,6 +13,9 @@ pub enum RepeatMode {
 
 #[derive(Debug, Clone)]
 pub struct PlaylistManager {
+    root_path: Option<PathBuf>,
+    current_dir: Option<PathBuf>,
+    entries: Vec<PlaylistEntry>,
     items: Vec<PlaylistItem>,
     cursor: usize,
     current_playing_index: Option<usize>,
@@ -25,6 +28,9 @@ pub struct PlaylistManager {
 impl PlaylistManager {
     pub fn new() -> Self {
         Self {
+            root_path: None,
+            current_dir: None,
+            entries: Vec::new(),
             items: Vec::new(),
             cursor: 0,
             current_playing_index: None,
@@ -36,17 +42,119 @@ impl PlaylistManager {
     }
 
     pub fn load_path<P: AsRef<Path>>(&mut self, path: P) -> usize {
-        let scanned_paths = AudioScanner::scan_path(path);
-        self.items.clear();
+        let path_ref = path.as_ref();
+        if !path_ref.exists() {
+            return 0;
+        }
+
+        let abs_path = std::fs::canonicalize(path_ref).unwrap_or_else(|_| path_ref.to_path_buf());
+
+        if abs_path.is_file() {
+            let parent = abs_path.parent().unwrap_or(&abs_path).to_path_buf();
+            self.root_path = Some(parent.clone());
+            self.current_dir = Some(parent);
+        } else {
+            self.root_path = Some(abs_path.clone());
+            self.current_dir = Some(abs_path);
+        }
+
         self.cursor = 0;
         self.current_playing_index = None;
+        self.refresh_entries();
+        self.items.len()
+    }
 
-        for (idx, p) in scanned_paths.into_iter().enumerate() {
-            self.items.push(PlaylistItem::from_path(idx, p));
+    pub fn refresh_entries(&mut self) {
+        self.entries.clear();
+        self.items.clear();
+
+        if let Some(ref current) = self.current_dir {
+            // 親ディレクトリへの復帰リンク（ルートより深い場合のみ）
+            if let Some(ref root) = self.root_path {
+                if current != root && current.starts_with(root) {
+                    self.entries.push(PlaylistEntry::ParentDir);
+                }
+            }
+
+            let (subdirs, audio_files) = AudioScanner::scan_directory_shallow(current);
+
+            for d in subdirs {
+                let name = d.file_name().and_then(|s| s.to_str()).unwrap_or("folder").to_string();
+                self.entries.push(PlaylistEntry::Directory {
+                    name: format!("{}/", name),
+                    path: d,
+                });
+            }
+
+            for (idx, f) in audio_files.into_iter().enumerate() {
+                let item = PlaylistItem::from_path(idx, f);
+                self.items.push(item.clone());
+                self.entries.push(PlaylistEntry::AudioFile(item));
+            }
         }
 
         self.rebuild_shuffle_indices();
-        self.items.len()
+
+        if !self.entries.is_empty() {
+            if self.cursor >= self.entries.len() {
+                self.cursor = self.entries.len() - 1;
+            }
+        } else {
+            self.cursor = 0;
+        }
+    }
+
+    pub fn enter_directory(&mut self, path: &Path) -> bool {
+        if path.is_dir() {
+            let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+            self.current_dir = Some(canonical);
+            self.cursor = 0;
+            self.refresh_entries();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn go_to_parent(&mut self) -> bool {
+        if let (Some(ref current), Some(ref root)) = (&self.current_dir, &self.root_path) {
+            if current == root || !current.starts_with(root) {
+                return false; // ルート上限境界ガード！
+            }
+            if let Some(parent) = current.parent() {
+                if parent.starts_with(root) {
+                    self.current_dir = Some(parent.to_path_buf());
+                    self.cursor = 0;
+                    self.refresh_entries();
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    pub fn breadcrumb(&self) -> String {
+        if let (Some(ref current), Some(ref root)) = (&self.current_dir, &self.root_path) {
+            let root_name = root.file_name().and_then(|s| s.to_str()).unwrap_or("root");
+            if current == root {
+                format!("📁 {}", root_name)
+            } else if let Ok(rel) = current.strip_prefix(root) {
+                let rel_str = rel.to_string_lossy().replace('\\', " / ");
+                format!("📁 {} / {}", root_name, rel_str)
+            } else {
+                format!("📁 {}", current.file_name().and_then(|s| s.to_str()).unwrap_or("folder"))
+            }
+        } else {
+            "📁 [No directory]".to_string()
+        }
+    }
+
+    pub fn entries(&self) -> &[PlaylistEntry] {
+        &self.entries
+    }
+
+    pub fn selected_entry(&self) -> Option<&PlaylistEntry> {
+        self.entries.get(self.cursor)
     }
 
     pub fn items(&self) -> &[PlaylistItem] {
@@ -54,11 +162,11 @@ impl PlaylistManager {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.items.is_empty()
+        self.entries.is_empty()
     }
 
     pub fn len(&self) -> usize {
-        self.items.len()
+        self.entries.len()
     }
 
     pub fn cursor(&self) -> usize {
@@ -66,23 +174,23 @@ impl PlaylistManager {
     }
 
     pub fn move_cursor_up(&mut self) {
-        if self.items.is_empty() {
+        if self.entries.is_empty() {
             self.cursor = 0;
             return;
         }
         if self.cursor > 0 {
             self.cursor -= 1;
         } else {
-            self.cursor = self.items.len() - 1;
+            self.cursor = self.entries.len() - 1;
         }
     }
 
     pub fn move_cursor_down(&mut self) {
-        if self.items.is_empty() {
+        if self.entries.is_empty() {
             self.cursor = 0;
             return;
         }
-        if self.cursor + 1 < self.items.len() {
+        if self.cursor + 1 < self.entries.len() {
             self.cursor += 1;
         } else {
             self.cursor = 0;
@@ -90,13 +198,13 @@ impl PlaylistManager {
     }
 
     pub fn set_cursor(&mut self, index: usize) {
-        if !self.items.is_empty() {
-            self.cursor = index.min(self.items.len() - 1);
+        if !self.entries.is_empty() {
+            self.cursor = index.min(self.entries.len() - 1);
         }
     }
 
     pub fn selected_item(&self) -> Option<&PlaylistItem> {
-        self.items.get(self.cursor)
+        self.selected_entry().and_then(|entry| entry.audio_item())
     }
 
     pub fn current_track(&self) -> Option<&PlaylistItem> {
@@ -110,7 +218,13 @@ impl PlaylistManager {
     pub fn select_and_play(&mut self, index: usize) -> Option<&PlaylistItem> {
         if index < self.items.len() {
             self.current_playing_index = Some(index);
-            self.cursor = index;
+            let target_path = self.items[index].path.clone();
+            if let Some(entry_idx) = self.entries.iter().position(|e| match e {
+                PlaylistEntry::AudioFile(it) => it.path == target_path,
+                _ => false,
+            }) {
+                self.cursor = entry_idx;
+            }
 
             // シャッフル順序の先頭を再生指定曲にして位置をリセット
             if self.shuffle_enabled {
@@ -124,6 +238,19 @@ impl PlaylistManager {
         } else {
             None
         }
+    }
+
+    pub fn select_and_play_entry(&mut self, entry_idx: usize) -> Option<&PlaylistItem> {
+        if entry_idx < self.entries.len() {
+            self.cursor = entry_idx;
+            if let Some(audio) = self.entries[entry_idx].audio_item() {
+                let target_path = audio.path.clone();
+                if let Some(item_idx) = self.items.iter().position(|it| it.path == target_path) {
+                    return self.select_and_play(item_idx);
+                }
+            }
+        }
+        None
     }
 
     pub fn next_track(&mut self) -> Option<&PlaylistItem> {
@@ -283,7 +410,7 @@ mod tests {
 
         let count = pm.load_path("sample");
         if count >= 3 {
-            assert_eq!(pm.len(), count);
+            assert!(pm.len() >= count);
             assert_eq!(pm.cursor(), 0);
 
             // カーソル移動巡回
@@ -292,7 +419,7 @@ mod tests {
             pm.move_cursor_up();
             assert_eq!(pm.cursor(), 0);
             pm.move_cursor_up();
-            assert_eq!(pm.cursor(), count - 1); // ループ
+            assert_eq!(pm.cursor(), pm.len() - 1); // ループ
 
             // 再生開始
             let track0 = pm.select_and_play(0).unwrap();
@@ -332,6 +459,32 @@ mod tests {
             dedupped.sort();
             dedupped.dedup();
             assert_eq!(dedupped.len(), count);
+        }
+    }
+
+    #[test]
+    fn test_playlist_hierarchical_navigation() {
+        let mut pm = PlaylistManager::new();
+        let count = pm.load_path("sample");
+        assert!(count > 0);
+
+        // sample 直下に sample-child サブディレクトリがあるはず
+        let sub_dir_entry = pm.entries().iter().find(|e| matches!(e, PlaylistEntry::Directory { name, .. } if name.contains("sample-child")));
+        if let Some(PlaylistEntry::Directory { path, .. }) = sub_dir_entry {
+            let child_path = path.clone();
+            // サブフォルダへ進入
+            assert!(pm.enter_directory(&child_path));
+            assert!(pm.breadcrumb().contains("sample-child"));
+
+            // サブフォルダ内には .. [PARENT DIR] が存在するはず
+            assert_eq!(pm.entries().first(), Some(&PlaylistEntry::ParentDir));
+
+            // 親フォルダへ戻る
+            assert!(pm.go_to_parent());
+            assert!(!pm.breadcrumb().contains("sample-child"));
+
+            // ルートからの脱出防止（ルートで go_to_parent しても false）
+            assert!(!pm.go_to_parent());
         }
     }
 }

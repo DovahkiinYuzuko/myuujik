@@ -7,6 +7,7 @@ use crate::config::AppConfig;
 use crate::fsm::playback_fsm::PlaybackState;
 use crate::fsm::ui_hfsm::{ModalState, UiHfsm, UiPane};
 use crate::i18n::I18n;
+use crate::playlist::item::PlaylistEntry;
 use crate::playlist::manager::PlaylistManager;
 use crate::ui::image_view::CoverArtWidget;
 use crate::ui::modals::{DeviceSelectModal, ErrorModal, HelpModal};
@@ -21,7 +22,7 @@ use ratatui::Terminal;
 use std::error::Error;
 use std::io::stdout;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub struct App {
     pub engine: AudioEngine,
@@ -45,6 +46,7 @@ pub struct App {
     pub controls_area: Rect,
     pub progress_area: Rect,
     pub status_area: Rect,
+    pub cursor_moved_at: Instant,
 }
 
 impl App {
@@ -90,6 +92,7 @@ impl App {
             controls_area: Rect::default(),
             progress_area: Rect::default(),
             status_area: Rect::default(),
+            cursor_moved_at: Instant::now(),
         };
 
         // 初期曲があれば先頭曲を準備して再生開始
@@ -101,7 +104,8 @@ impl App {
     }
 
     pub fn play_current_selected(&mut self) {
-        if let Some(track) = self.playlist.selected_item().cloned() {
+        let cursor = self.playlist.cursor();
+        if let Some(track) = self.playlist.select_and_play_entry(cursor).cloned() {
             if let Ok(decoder) = AudioDecoder::open(&track.path) {
                 let meta = decoder.metadata().clone();
                 let cover = decoder.cover_art().cloned();
@@ -109,7 +113,6 @@ impl App {
                 self.cover_widget.update_cover_art(&track.path.to_string_lossy(), cover.as_ref());
             }
 
-            self.playlist.select_and_play(self.playlist.cursor());
             self.engine.play_file(&track.path);
         }
     }
@@ -218,13 +221,34 @@ impl App {
                 self.engine.toggle_pause();
             }
             KeyCode::Enter => {
-                self.play_current_selected();
+                if let Some(entry) = self.playlist.selected_entry().cloned() {
+                    match entry {
+                        PlaylistEntry::ParentDir => {
+                            self.playlist.go_to_parent();
+                            self.cursor_moved_at = Instant::now();
+                        }
+                        PlaylistEntry::Directory { path, .. } => {
+                            self.playlist.enter_directory(&path);
+                            self.cursor_moved_at = Instant::now();
+                        }
+                        PlaylistEntry::AudioFile(_) => {
+                            self.play_current_selected();
+                        }
+                    }
+                }
+            }
+            KeyCode::Backspace => {
+                if self.playlist.go_to_parent() {
+                    self.cursor_moved_at = Instant::now();
+                }
             }
             KeyCode::Up => {
                 self.playlist.move_cursor_up();
+                self.cursor_moved_at = Instant::now();
             }
             KeyCode::Down => {
                 self.playlist.move_cursor_down();
+                self.cursor_moved_at = Instant::now();
             }
             KeyCode::Right => {
                 let cur = self.engine.current_position_secs();
@@ -318,15 +342,29 @@ impl App {
                     return;
                 }
 
-                // 4. プレイリスト領域のクリック -> 楽曲選択＆即時再生
+                // 4. プレイリスト領域のクリック -> 楽曲選択＆即時再生、またはフォルダ進入/親戻り
                 if Self::is_inside_rect(col, row, self.playlist_area) {
-                    let inner_y = self.playlist_area.y.saturating_add(1);
+                    let inner_y = self.playlist_area.y.saturating_add(2); // 上枠線(1) + パンくず行(1)
                     let inner_bottom = self.playlist_area.y.saturating_add(self.playlist_area.height).saturating_sub(1);
                     if row >= inner_y && row < inner_bottom {
                         let clicked_line = (row - inner_y) as usize;
                         if clicked_line < self.playlist.len() {
                             self.playlist.set_cursor(clicked_line);
-                            self.play_current_selected();
+                            self.cursor_moved_at = Instant::now();
+
+                            if let Some(entry) = self.playlist.selected_entry().cloned() {
+                                match entry {
+                                    PlaylistEntry::ParentDir => {
+                                        self.playlist.go_to_parent();
+                                    }
+                                    PlaylistEntry::Directory { path, .. } => {
+                                        self.playlist.enter_directory(&path);
+                                    }
+                                    PlaylistEntry::AudioFile(_) => {
+                                        self.play_current_selected();
+                                    }
+                                }
+                            }
                         }
                     }
                     return;
@@ -348,6 +386,7 @@ impl App {
                 let row = mouse.row;
                 if Self::is_inside_rect(col, row, self.playlist_area) {
                     self.playlist.move_cursor_up();
+                    self.cursor_moved_at = Instant::now();
                 } else {
                     self.increase_volume();
                 }
@@ -357,6 +396,7 @@ impl App {
                 let row = mouse.row;
                 if Self::is_inside_rect(col, row, self.playlist_area) {
                     self.playlist.move_cursor_down();
+                    self.cursor_moved_at = Instant::now();
                 } else {
                     self.decrease_volume();
                 }
@@ -496,6 +536,7 @@ impl App {
                     is_focused: active_pane == UiPane::Playlist,
                     i18n: &self.i18n,
                     theme: &self.theme,
+                    elapsed_ms: self.cursor_moved_at.elapsed().as_millis(),
                 };
                 f.render_widget(playlist_view, main_layout[0]);
 

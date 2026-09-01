@@ -1,17 +1,20 @@
 use crate::i18n::I18n;
+use crate::playlist::item::PlaylistEntry;
 use crate::playlist::manager::PlaylistManager;
 use crate::ui::theme::Theme;
+use crate::ui::ticker::{str_width, take_cells, MarqueeTicker};
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Widget};
+use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Widget};
 
 pub struct PlaylistView<'a> {
     pub playlist: &'a PlaylistManager,
     pub is_focused: bool,
     pub i18n: &'a I18n,
     pub theme: &'a Theme,
+    pub elapsed_ms: u128,
 }
 
 impl<'a> Widget for PlaylistView<'a> {
@@ -37,27 +40,60 @@ impl<'a> Widget for PlaylistView<'a> {
         let inner_area = block.inner(area);
         block.render(area, buf);
 
+        if inner_area.height < 2 {
+            return;
+        }
+
+        // 上部1行にパンくずリストバー、残りにアイテム一覧を配置
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1), // パンくずリスト
+                Constraint::Min(1),    // リスト本体
+            ])
+            .split(inner_area);
+
+        // 1. パンくずリスト
+        let breadcrumb_text = self.playlist.breadcrumb();
+        let breadcrumb_para = Paragraph::new(Line::from(vec![
+            Span::styled(" ", Style::default()),
+            Span::styled(
+                breadcrumb_text,
+                Style::default()
+                    .fg(Color::Rgb(251, 191, 36))
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]))
+        .style(Style::default().bg(self.theme.bg_card));
+        breadcrumb_para.render(chunks[0], buf);
+
         if self.playlist.is_empty() {
             let empty_msg = Line::from(Span::styled(
                 format!("  {}", self.i18n.t("playlist.empty")),
                 Style::default().fg(self.theme.text_secondary).bg(self.theme.bg_card),
             ));
             let list = List::new(vec![ListItem::new(empty_msg)]).style(Style::default().bg(self.theme.bg_card));
-            list.render(inner_area, buf);
+            list.render(chunks[1], buf);
             return;
         }
 
-        let current_playing_idx = self.playlist.current_playing_index();
+        let current_track_path = self.playlist.current_track().map(|t| &t.path);
         let cursor_idx = self.playlist.cursor();
+        let ticker = MarqueeTicker::default();
 
         let list_items: Vec<ListItem> = self
             .playlist
-            .items()
+            .entries()
             .iter()
             .enumerate()
-            .map(|(idx, item)| {
+            .map(|(idx, entry)| {
                 let is_cursor = idx == cursor_idx;
-                let is_playing = Some(idx) == current_playing_idx;
+                let is_playing = match entry {
+                    PlaylistEntry::AudioFile(item) => {
+                        current_track_path.map(|p| p == &item.path).unwrap_or(false)
+                    }
+                    _ => false,
+                };
 
                 let prefix = if is_cursor && is_playing {
                     " ▶▶ "
@@ -69,8 +105,38 @@ impl<'a> Widget for PlaylistView<'a> {
                     "    "
                 };
 
-                let num_str = format!("{:02}. ", idx + 1);
-                let name_str = item.display_name.clone();
+                let (badge_str, badge_color): (String, Color) = match entry {
+                    PlaylistEntry::ParentDir => ("[UP] ".to_string(), Color::Rgb(192, 132, 252)),
+                    PlaylistEntry::Directory { .. } => ("[DIR] ".to_string(), Color::Rgb(251, 191, 36)),
+                    PlaylistEntry::AudioFile(item) => {
+                        let ext = item
+                            .path
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .unwrap_or("AUD")
+                            .to_uppercase();
+                        let col = match ext.as_str() {
+                            "FLAC" | "ALAC" => Color::Rgb(56, 189, 248),
+                            "WAV" | "WAVE" => Color::Rgb(52, 211, 153),
+                            "MP3" => Color::Rgb(244, 114, 182),
+                            _ => Color::Rgb(148, 163, 184),
+                        };
+                        (format!("[{}] ", ext), col)
+                    }
+                };
+
+                let raw_name = entry.display_name();
+
+                // プレフィックス＋バッジのセル幅
+                let fixed_width = str_width(prefix) + str_width(&badge_str);
+                let available_name_width = (chunks[1].width as usize).saturating_sub(fixed_width + 1);
+
+                // カーソル行なら電光掲示板マーキースクロール、それ以外は枠幅カット
+                let display_name = if is_cursor {
+                    ticker.render(raw_name, available_name_width, self.elapsed_ms)
+                } else {
+                    take_cells(raw_name, available_name_width)
+                };
 
                 let line = Line::from(vec![
                     Span::styled(
@@ -84,19 +150,17 @@ impl<'a> Widget for PlaylistView<'a> {
                         },
                     ),
                     Span::styled(
-                        num_str,
-                        if is_cursor {
-                            Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default().fg(self.theme.text_secondary)
-                        },
+                        badge_str,
+                        Style::default().fg(badge_color).add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(
-                        name_str,
+                        display_name,
                         if is_cursor {
                             Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
                         } else if is_playing {
                             Style::default().fg(self.theme.accent_playing).add_modifier(Modifier::BOLD)
+                        } else if matches!(entry, PlaylistEntry::Directory { .. }) {
+                            Style::default().fg(Color::Rgb(251, 191, 36))
                         } else {
                             Style::default().fg(self.theme.text_primary)
                         },
@@ -114,6 +178,6 @@ impl<'a> Widget for PlaylistView<'a> {
             .collect();
 
         let list = List::new(list_items).style(Style::default().bg(self.theme.bg_card));
-        list.render(inner_area, buf);
+        list.render(chunks[1], buf);
     }
 }

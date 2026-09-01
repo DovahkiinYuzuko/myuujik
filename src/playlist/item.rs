@@ -30,6 +30,35 @@ impl PlaylistItem {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum PlaylistEntry {
+    ParentDir,
+    Directory { name: String, path: PathBuf },
+    AudioFile(PlaylistItem),
+}
+
+impl PlaylistEntry {
+    pub fn display_name(&self) -> &str {
+        match self {
+            PlaylistEntry::ParentDir => ".. [PARENT DIR]",
+            PlaylistEntry::Directory { name, .. } => name.as_str(),
+            PlaylistEntry::AudioFile(item) => item.display_name.as_str(),
+        }
+    }
+
+    pub fn is_audio_file(&self) -> bool {
+        matches!(self, PlaylistEntry::AudioFile(_))
+    }
+
+    pub fn audio_item(&self) -> Option<&PlaylistItem> {
+        match self {
+            PlaylistEntry::AudioFile(item) => Some(item),
+            _ => None,
+        }
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
