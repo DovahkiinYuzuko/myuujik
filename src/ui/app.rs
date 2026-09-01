@@ -15,7 +15,7 @@ use crate::ui::views::{ControlsView, FooterView, PlaylistView, TrackInfoView};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::Terminal;
 use std::error::Error;
@@ -40,6 +40,11 @@ pub struct App {
     pub is_exclusive: bool,
     pub should_quit: bool,
     pub last_engine_state: PlaybackState,
+    pub playlist_area: Rect,
+    pub track_info_area: Rect,
+    pub controls_area: Rect,
+    pub progress_area: Rect,
+    pub status_area: Rect,
 }
 
 impl App {
@@ -80,6 +85,11 @@ impl App {
             is_exclusive,
             should_quit: false,
             last_engine_state: PlaybackState::Stopped,
+            playlist_area: Rect::default(),
+            track_info_area: Rect::default(),
+            controls_area: Rect::default(),
+            progress_area: Rect::default(),
+            status_area: Rect::default(),
         };
 
         // 初期曲があれば先頭曲を準備して再生開始
@@ -262,10 +272,96 @@ impl App {
         }
     }
 
+    fn is_inside_rect(x: u16, y: u16, rect: Rect) -> bool {
+        x >= rect.x && x < rect.x.saturating_add(rect.width) && y >= rect.y && y < rect.y.saturating_add(rect.height)
+    }
+
     pub fn handle_mouse_event(&mut self, mouse: MouseEvent) {
-        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
-            // 左クリックで再生/一時停止トグル
-            self.engine.toggle_pause();
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                let col = mouse.column;
+                let row = mouse.row;
+
+                // 1. プログレスバーのクリック -> シーク
+                if Self::is_inside_rect(col, row, self.progress_area) && self.progress_area.width > 0 {
+                    let offset = col.saturating_sub(self.progress_area.x) as f64;
+                    let ratio = (offset / self.progress_area.width as f64).clamp(0.0, 1.0);
+                    let total = self.engine.total_duration_secs();
+                    if total > 0.0 {
+                        self.engine.seek(ratio * total);
+                    }
+                    return;
+                }
+
+                // 2. ステータス行のクリック -> 各種バッジのトグル
+                if Self::is_inside_rect(col, row, self.status_area) {
+                    let offset_x = col.saturating_sub(self.status_area.x);
+                    if offset_x < 15 {
+                        self.engine.toggle_pause();
+                    } else if offset_x < 28 {
+                        self.playlist.toggle_repeat();
+                    } else if offset_x < 41 {
+                        self.playlist.toggle_shuffle();
+                    } else if offset_x < 54 {
+                        self.increase_volume();
+                    } else {
+                        self.visualizer_mode = self.visualizer_mode.next();
+                    }
+                    return;
+                }
+
+                // 3. 楽曲情報ペインのクリック -> 出力モード（Shared/Exclusive）の切り替え
+                if Self::is_inside_rect(col, row, self.track_info_area) {
+                    let target_mode = if self.is_exclusive { "Shared" } else { "Exclusive" };
+                    self.engine.set_output_mode(target_mode);
+                    self.is_exclusive = target_mode == "Exclusive";
+                    return;
+                }
+
+                // 4. プレイリスト領域のクリック -> 楽曲選択＆即時再生
+                if Self::is_inside_rect(col, row, self.playlist_area) {
+                    let inner_y = self.playlist_area.y.saturating_add(1);
+                    let inner_bottom = self.playlist_area.y.saturating_add(self.playlist_area.height).saturating_sub(1);
+                    if row >= inner_y && row < inner_bottom {
+                        let clicked_line = (row - inner_y) as usize;
+                        if clicked_line < self.playlist.len() {
+                            self.playlist.set_cursor(clicked_line);
+                            self.play_current_selected();
+                        }
+                    }
+                    return;
+                }
+
+                // 5. その他の領域（空白領域など） -> 従来通り再生/一時停止トグル
+                self.engine.toggle_pause();
+            }
+            MouseEventKind::Down(MouseButton::Right) => {
+                let col = mouse.column;
+                let row = mouse.row;
+                // 右クリックで音量ダウン（コントロール領域またはステータス行）
+                if Self::is_inside_rect(col, row, self.controls_area) {
+                    self.decrease_volume();
+                }
+            }
+            MouseEventKind::ScrollUp => {
+                let col = mouse.column;
+                let row = mouse.row;
+                if Self::is_inside_rect(col, row, self.playlist_area) {
+                    self.playlist.move_cursor_up();
+                } else {
+                    self.increase_volume();
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                let col = mouse.column;
+                let row = mouse.row;
+                if Self::is_inside_rect(col, row, self.playlist_area) {
+                    self.playlist.move_cursor_down();
+                } else {
+                    self.decrease_volume();
+                }
+            }
+            _ => {}
         }
     }
 
@@ -367,6 +463,30 @@ impl App {
                         Constraint::Percentage(42),
                     ])
                     .split(main_layout[1]);
+
+                // マウス判定用に対象領域の矩形をキャッシュ
+                self.playlist_area = main_layout[0];
+                self.track_info_area = right_layout[0];
+                self.controls_area = right_layout[1];
+
+                let controls_inner = Rect {
+                    x: self.controls_area.x.saturating_add(1),
+                    y: self.controls_area.y.saturating_add(1),
+                    width: self.controls_area.width.saturating_sub(2),
+                    height: self.controls_area.height.saturating_sub(2),
+                };
+
+                let control_chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Length(1), // プログレスバー
+                        Constraint::Length(1), // ステータス行
+                        Constraint::Min(2),    // リアルタイム波形スパークライン
+                    ])
+                    .split(controls_inner);
+
+                self.progress_area = control_chunks[0];
+                self.status_area = control_chunks[1];
 
                 let active_pane = self.hfsm.active_pane;
 
@@ -523,6 +643,66 @@ mod tests {
             // qキーで終了
             app.handle_key_event(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
             assert!(app.should_quit);
+        }
+    }
+
+    #[test]
+    fn test_app_mouse_controls() {
+        let config = AppConfig::default();
+        if let Ok(mut app) = App::new(&config, None) {
+            // 領域の設定
+            app.playlist_area = Rect::new(0, 0, 30, 20);
+            app.progress_area = Rect::new(32, 12, 40, 1);
+            app.status_area = Rect::new(32, 13, 40, 1);
+            app.track_info_area = Rect::new(32, 0, 40, 10);
+            app.controls_area = Rect::new(32, 11, 40, 9);
+
+            // 1. ホイール上下による音量制御テスト
+            let initial_vol = app.engine.volume();
+            app.handle_mouse_event(MouseEvent {
+                kind: MouseEventKind::ScrollUp,
+                column: 35,
+                row: 13,
+                modifiers: KeyModifiers::NONE,
+            });
+            assert!(app.engine.volume() >= initial_vol);
+
+            app.handle_mouse_event(MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 35,
+                row: 13,
+                modifiers: KeyModifiers::NONE,
+            });
+
+            // 2. ステータス行クリックによるリピートトグルテスト (offset 16: LOOPバッジ)
+            assert_eq!(app.playlist.repeat_mode(), crate::playlist::manager::RepeatMode::Off);
+            app.handle_mouse_event(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 32 + 18,
+                row: 13,
+                modifiers: KeyModifiers::NONE,
+            });
+            assert_eq!(app.playlist.repeat_mode(), crate::playlist::manager::RepeatMode::All);
+
+            // 3. ステータス行クリックによるシャッフルトグルテスト (offset 30: SHUFバッジ)
+            assert!(!app.playlist.is_shuffle());
+            app.handle_mouse_event(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 32 + 30,
+                row: 13,
+                modifiers: KeyModifiers::NONE,
+            });
+            assert!(app.playlist.is_shuffle());
+
+            // 4. トラック情報領域クリックによる出力モードトグルテスト
+            let initial_mode = app.is_exclusive;
+            app.handle_mouse_event(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 35,
+                row: 5,
+                modifiers: KeyModifiers::NONE,
+            });
+            assert_ne!(app.is_exclusive, initial_mode);
         }
     }
 }
