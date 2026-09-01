@@ -171,6 +171,11 @@ impl AudioEngine {
                         shared_state.is_playing.store(false, Ordering::Relaxed);
                         shared_state.current_sample_position.store(0, Ordering::Relaxed);
 
+                        // 旧バックエンドの排他ロック（WASAPI Exclusive等）およびリングバッファを先行解放
+                        backend = None;
+                        producer = None;
+                        decoder = None;
+
                         match AudioDecoder::open(&path) {
                             Ok(dec) => {
                                 let meta = dec.metadata().clone();
@@ -261,9 +266,12 @@ impl AudioEngine {
                         fsm.write().unwrap().transition(PlaybackEvent::Stop);
                         shared_state.is_playing.store(false, Ordering::Relaxed);
                         shared_state.current_sample_position.store(0, Ordering::Relaxed);
-                        if let Some(b) = backend.as_mut() {
+                        if let Some(mut b) = backend.take() {
                             let _ = b.pause();
+                            drop(b);
                         }
+                        backend = None;
+                        producer = None;
                         decoder = None;
                     }
                     EngineCommand::Seek(target_secs) => {
@@ -275,6 +283,7 @@ impl AudioEngine {
                                     let rate = shared_state.sample_rate.load(Ordering::Relaxed).max(1);
                                     let sample_pos = (actual * rate as f64) as u64;
                                     shared_state.current_sample_position.store(sample_pos, Ordering::Relaxed);
+                                    shared_state.seek_trigger.store(true, Ordering::Release);
                                 }
                             }
                             shared_state.is_playing.store(true, Ordering::Relaxed);
@@ -298,6 +307,7 @@ impl AudioEngine {
 
                             if let Some(mut old_b) = backend.take() {
                                 let _ = old_b.pause();
+                                drop(old_b);
                             }
 
                             let b_res = Self::init_backend(
@@ -354,6 +364,9 @@ impl AudioEngine {
                                 logger::info("AudioEngine", "Track finished naturally.");
                                 fsm.write().unwrap().transition(PlaybackEvent::TrackFinished);
                                 shared_state.is_playing.store(false, Ordering::Relaxed);
+                                backend = None;
+                                producer = None;
+                                decoder = None;
                             }
                             Err(e) => {
                                 logger::error("AudioEngine", &format!("Decoding packet error: {}", e));
@@ -467,4 +480,23 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_audio_engine_track_change_drops_old_backend() {
+        let engine = AudioEngine::new("Shared", "Default", 0.85).expect("failed to init engine");
+        let sample_wav = Path::new("sample/Kendrick Lamar - Not Like Us.wav");
+        let sample_mp3 = Path::new("sample/Coolio - Gangsta's Paradise (feat. L.V.) [Official Music Video].mp3");
+        if sample_wav.exists() && sample_mp3.exists() {
+            // トラック1再生
+            engine.play_file(sample_wav);
+            thread::sleep(Duration::from_millis(50));
+            // トラック2に即座に切り替え（旧バックエンドが即座にドロップされること）
+            engine.play_file(sample_mp3);
+            thread::sleep(Duration::from_millis(50));
+            engine.stop();
+            thread::sleep(Duration::from_millis(30));
+            assert_eq!(engine.current_state(), PlaybackState::Stopped);
+        }
+    }
 }
+

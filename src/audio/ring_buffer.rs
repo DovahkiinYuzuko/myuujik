@@ -10,6 +10,7 @@ pub struct SharedAudioState {
     pub total_samples: AtomicU64,
     pub sample_rate: AtomicU32,
     pub channels: AtomicU32,
+    pub seek_trigger: AtomicBool,
 }
 
 impl SharedAudioState {
@@ -22,6 +23,7 @@ impl SharedAudioState {
             total_samples: AtomicU64::new(0),
             sample_rate: AtomicU32::new(44100),
             channels: AtomicU32::new(2),
+            seek_trigger: AtomicBool::new(false),
         }
     }
 

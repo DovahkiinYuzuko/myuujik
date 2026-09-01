@@ -3,12 +3,13 @@ use crate::audio::traits::AudioOutputBackend;
 use crate::logger;
 use rtrb::Consumer;
 use std::error::Error;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::Arc;
 
 pub struct ExclusiveBackend {
     is_running: Arc<AtomicBool>,
     stop_signal: Arc<AtomicBool>,
+    wake_event_handle: Arc<AtomicIsize>,
     thread_handle: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -34,9 +35,11 @@ impl ExclusiveBackend {
 
         let is_running = Arc::new(AtomicBool::new(false));
         let stop_signal = Arc::new(AtomicBool::new(false));
+        let wake_event_handle = Arc::new(AtomicIsize::new(0));
 
         let is_running_clone = Arc::clone(&is_running);
         let stop_signal_clone = Arc::clone(&stop_signal);
+        let wake_event_handle_clone = Arc::clone(&wake_event_handle);
 
         let (init_tx, init_rx) = std::sync::mpsc::channel::<Result<(), String>>();
 
@@ -243,7 +246,10 @@ impl ExclusiveBackend {
                 };
 
                 let event_handle = match CreateEventW(None, false, false, None) {
-                    Ok(h) => h,
+                    Ok(h) => {
+                        wake_event_handle_clone.store(h.0 as isize, Ordering::Relaxed);
+                        h
+                    }
                     Err(e) => {
                         let err_msg = format!("CreateEventW failed: {:?}", e);
                         logger::error("ExclusiveBackend", &err_msg);
@@ -257,6 +263,7 @@ impl ExclusiveBackend {
                     let err_msg = format!("SetEventHandle failed: {:?}", e);
                     logger::error("ExclusiveBackend", &err_msg);
                     let _ = init_tx.send(Err(err_msg));
+                    wake_event_handle_clone.store(0, Ordering::Relaxed);
                     let _ = CloseHandle(event_handle);
                     CoUninitialize();
                     return;
@@ -269,6 +276,7 @@ impl ExclusiveBackend {
                         let err_msg = format!("GetService<IAudioRenderClient> failed: {:?}", e);
                         logger::error("ExclusiveBackend", &err_msg);
                         let _ = init_tx.send(Err(err_msg));
+                        wake_event_handle_clone.store(0, Ordering::Relaxed);
                         let _ = CloseHandle(event_handle);
                         CoUninitialize();
                         return;
@@ -295,6 +303,7 @@ impl ExclusiveBackend {
                     let err_msg = format!("IAudioClient Start failed: {:?}", e);
                     logger::error("ExclusiveBackend", &err_msg);
                     let _ = init_tx.send(Err(err_msg));
+                    wake_event_handle_clone.store(0, Ordering::Relaxed);
                     let _ = CloseHandle(event_handle);
                     CoUninitialize();
                     return;
@@ -303,15 +312,15 @@ impl ExclusiveBackend {
                 logger::info("ExclusiveBackend", "Exclusive mode stream started successfully.");
                 let _ = init_tx.send(Ok(()));
 
-                // イベントドリブン WASAPI 再生ループ
+                // イベントドリブン WASAPI 再生ループ（タイムアウト50ms＋即時停止検知）
                 while !stop_signal_clone.load(Ordering::Relaxed) {
-                    let wait_res = WaitForSingleObject(event_handle, 2000);
-                    if wait_res != WAIT_OBJECT_0 {
-                        continue;
-                    }
-
+                    let wait_res = WaitForSingleObject(event_handle, 50);
                     if stop_signal_clone.load(Ordering::Relaxed) {
                         break;
+                    }
+
+                    if wait_res != WAIT_OBJECT_0 {
+                        continue;
                     }
 
                     let is_active = is_running_clone.load(Ordering::Relaxed);
@@ -380,6 +389,7 @@ impl ExclusiveBackend {
                 }
 
                 let _ = client.Stop();
+                wake_event_handle_clone.store(0, Ordering::Relaxed);
                 let _ = CloseHandle(event_handle);
                 CoUninitialize();
                 logger::info("ExclusiveBackend", "Exclusive mode stream stopped and cleaned up.");
@@ -391,6 +401,7 @@ impl ExclusiveBackend {
                 Ok(Self {
                     is_running,
                     stop_signal,
+                    wake_event_handle,
                     thread_handle: Some(thread_handle),
                 })
             }
@@ -435,6 +446,17 @@ impl AudioOutputBackend for ExclusiveBackend {
 impl Drop for ExclusiveBackend {
     fn drop(&mut self) {
         self.stop_signal.store(true, Ordering::Relaxed);
+        #[cfg(windows)]
+        {
+            let raw_h = self.wake_event_handle.load(Ordering::Relaxed);
+            if raw_h != 0 {
+                use windows::Win32::Foundation::HANDLE;
+                use windows::Win32::System::Threading::SetEvent;
+                unsafe {
+                    let _ = SetEvent(HANDLE(raw_h as _));
+                }
+            }
+        }
         if let Some(handle) = self.thread_handle.take() {
             let _ = handle.join();
         }

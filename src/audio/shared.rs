@@ -94,6 +94,7 @@ impl SharedBackend {
 
         let stream = if is_direct {
             logger::info("SharedBackend", "Direct 1:1 stream path selected (no resampling).");
+            let mut fade_in_frames = 0usize;
             device.build_output_stream(
                 &config,
                 move |output: &mut [f32], _: &cpal::OutputCallbackInfo| {
@@ -103,15 +104,27 @@ impl SharedBackend {
                         return;
                     }
 
+                    if state.seek_trigger.swap(false, Ordering::Acquire) {
+                        fade_in_frames = 64;
+                    }
+
                     let vol = state.get_volume();
                     let mut frames_played = 0;
 
                     for frame in output.chunks_mut(out_channels) {
+                        let fade_mult = if fade_in_frames > 0 {
+                            let m = 1.0 - (fade_in_frames as f32 / 64.0);
+                            fade_in_frames -= 1;
+                            m
+                        } else {
+                            1.0
+                        };
+
                         let mut frame_ok = true;
                         for ch_sample in frame.iter_mut() {
                             match consumer.pop() {
                                 Ok(sample) => {
-                                    *ch_sample = sample * vol;
+                                    *ch_sample = sample * vol * fade_mult;
                                 }
                                 Err(_) => {
                                     *ch_sample = 0.0;
@@ -140,6 +153,7 @@ impl SharedBackend {
             let mut curr_frame = vec![0.0f32; src_channels];
             let mut next_frame = vec![0.0f32; src_channels];
             let mut src_fraction = 0.0f64;
+            let mut fade_in_frames = 0usize;
 
             // 初期フレームの読み込み
             for ch in 0..src_channels {
@@ -156,15 +170,35 @@ impl SharedBackend {
                         return;
                     }
 
+                    // シーク発生時のリサンプラー境界リセットとマイクロフェードイン
+                    if state.seek_trigger.swap(false, Ordering::Acquire) {
+                        for ch in 0..src_channels {
+                            curr_frame[ch] = 0.0;
+                            next_frame[ch] = 0.0;
+                        }
+                        src_fraction = 0.0;
+                        fade_in_frames = 64;
+                    }
+
                     let vol = state.get_volume();
                     let mut src_frames_consumed = 0u64;
 
+                    // コールバック内ヒープアロケーションを完全排除（スタック配列）
+                    let mut interpolated_src = [0.0f32; 8];
+
                     for frame in output.chunks_mut(out_channels) {
+                        let fade_mult = if fade_in_frames > 0 {
+                            let m = 1.0 - (fade_in_frames as f32 / 64.0);
+                            fade_in_frames -= 1;
+                            m
+                        } else {
+                            1.0
+                        };
+
                         // 線形補間サンプル値の計算
                         let frac = src_fraction as f32;
-                        let mut interpolated_src = vec![0.0f32; src_channels];
-                        for ch in 0..src_channels {
-                            interpolated_src[ch] = (curr_frame[ch] * (1.0 - frac) + next_frame[ch] * frac) * vol;
+                        for ch in 0..src_channels.min(8) {
+                            interpolated_src[ch] = (curr_frame[ch] * (1.0 - frac) + next_frame[ch] * frac) * vol * fade_mult;
                         }
 
                         // チャンネルマッピング
