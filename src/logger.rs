@@ -104,11 +104,65 @@ pub fn get_local_timestamp() -> (String, String) {
 #[cfg(not(windows))]
 pub fn get_local_timestamp() -> (String, String) {
     let now = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
-    let secs = now.as_secs();
+    let total_secs = now.as_secs();
     let millis = now.subsec_millis();
-    let file_ts = format!("{}_{:03}", secs, millis);
-    let log_ts = format!("{}.{:03}", secs, millis);
+    let (year, month, day, hour, min, sec) = epoch_secs_to_utc_ymd(total_secs);
+
+    let file_ts = format!(
+        "{:04}-{:02}-{:02}_{:02}-{:02}-{:02}",
+        year, month, day, hour, min, sec
+    );
+    let log_ts = format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}",
+        year, month, day, hour, min, sec, millis
+    );
     (file_ts, log_ts)
+}
+
+/// UNIX エポック秒から UTC の (年, 月, 日, 時, 分, 秒) を決定論的に算出する。
+pub fn epoch_secs_to_utc_ymd(total_secs: u64) -> (u32, u32, u32, u32, u32, u32) {
+    let sec = (total_secs % 60) as u32;
+    let total_mins = total_secs / 60;
+    let min = (total_mins % 60) as u32;
+    let total_hours = total_mins / 60;
+    let hour = (total_hours % 24) as u32;
+    let mut days = (total_hours / 24) as i64;
+
+    let mut year = 1970i64;
+    loop {
+        let leap = is_leap_year(year);
+        let days_in_year = if leap { 366 } else { 365 };
+        if days >= days_in_year {
+            days -= days_in_year;
+            year += 1;
+        } else {
+            break;
+        }
+    }
+
+    let leap = is_leap_year(year);
+    let days_in_months = [
+        31,
+        if leap { 29 } else { 28 },
+        31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+    ];
+
+    let mut month = 1u32;
+    for &dim in &days_in_months {
+        if days >= dim as i64 {
+            days -= dim as i64;
+            month += 1;
+        } else {
+            break;
+        }
+    }
+
+    let day = (days + 1) as u32;
+    (year as u32, month, day, hour, min, sec)
+}
+
+fn is_leap_year(year: i64) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
 }
 
 pub fn info(module: &str, message: &str) {
@@ -159,4 +213,20 @@ mod tests {
 
         let _ = fs::remove_dir_all(test_dir);
     }
+
+    #[test]
+    fn test_epoch_to_utc_formatting() {
+        // 1970-01-01 00:00:00 UTC
+        let (y, m, d, h, min, s) = epoch_secs_to_utc_ymd(0);
+        assert_eq!((y, m, d, h, min, s), (1970, 1, 1, 0, 0, 0));
+
+        // 2024-02-29 00:00:00 UTC (うるう年の検証)
+        let (y, m, d, h, min, s) = epoch_secs_to_utc_ymd(1709164800);
+        assert_eq!((y, m, d, h, min, s), (2024, 2, 29, 0, 0, 0));
+
+        // 2026-09-02 04:00:00 UTC
+        let (y, m, d, h, min, s) = epoch_secs_to_utc_ymd(1788321600);
+        assert_eq!((y, m, d, h, min, s), (2026, 9, 2, 4, 0, 0));
+    }
 }
+
