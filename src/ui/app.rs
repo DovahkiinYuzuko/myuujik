@@ -299,13 +299,27 @@ impl App {
             }
 
             if self.engine.current_state() == PlaybackState::Playing {
-                // 本物の再生中PCMサンプルから直接波形データを取得
-                let raw_points = self.engine.get_waveform_points(self.waveform_points.len());
-                for (cur, &new_val) in self.waveform_points.iter_mut().zip(raw_points.iter()) {
-                    if new_val > *cur {
-                        *cur = new_val;
-                    } else {
-                        *cur = (*cur * 0.82 + new_val * 0.18).max(0.01);
+                match self.visualizer_mode {
+                    VisualizerMode::Type4 => {
+                        // WAVE: 滑らかにスルスルうねる多重サイン波オシロスコープ
+                        let pos = self.engine.current_position_secs();
+                        let len = self.waveform_points.len();
+                        for i in 0..len {
+                            let t = pos * 8.0 + (i as f64 * 0.35);
+                            let val = ((t.sin() * 0.4 + (t * 2.3).sin() * 0.3 + 0.5).abs() as f32).clamp(0.05, 1.0);
+                            self.waveform_points[i] = val;
+                        }
+                    }
+                    VisualizerMode::Type3 | VisualizerMode::Type3Polar => {
+                        // METER / CIRCLE: スピーカー出力直結のゼロレイテンシ本物PCMサンプル
+                        let raw_points = self.engine.get_waveform_points(self.waveform_points.len());
+                        for (cur, &new_val) in self.waveform_points.iter_mut().zip(raw_points.iter()) {
+                            if new_val > *cur {
+                                *cur = new_val;
+                            } else {
+                                *cur = (*cur * 0.80 + new_val * 0.20).max(0.01);
+                            }
+                        }
                     }
                 }
             } else {

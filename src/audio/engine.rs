@@ -3,14 +3,13 @@ use crate::audio::exclusive_wasapi::ExclusiveBackend;
 use crate::audio::ring_buffer::SharedAudioState;
 use crate::audio::shared::SharedBackend;
 use crate::audio::traits::AudioOutputBackend;
-use crate::audio::visualizer::WaveformAnalyzer;
 use crate::fsm::playback_fsm::{PlaybackEvent, PlaybackFsm, PlaybackState};
 use crate::logger;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::Duration;
 
@@ -33,7 +32,6 @@ pub struct AudioEngine {
     fsm: Arc<RwLock<PlaybackFsm>>,
     active_mode: Arc<RwLock<String>>,
     is_fallback: Arc<AtomicBool>,
-    visualizer_analyzer: Arc<Mutex<WaveformAnalyzer>>,
 }
 
 impl AudioEngine {
@@ -49,13 +47,11 @@ impl AudioEngine {
         let fsm = Arc::new(RwLock::new(PlaybackFsm::new()));
         let active_mode = Arc::new(RwLock::new(initial_mode.to_string()));
         let is_fallback = Arc::new(AtomicBool::new(false));
-        let visualizer_analyzer = Arc::new(Mutex::new(WaveformAnalyzer::new(4096)));
 
         let shared_state_clone = Arc::clone(&shared_state);
         let fsm_clone = Arc::clone(&fsm);
         let active_mode_clone = Arc::clone(&active_mode);
         let is_fallback_clone = Arc::clone(&is_fallback);
-        let visualizer_analyzer_clone = Arc::clone(&visualizer_analyzer);
 
         let initial_device_str = initial_device.to_string();
         let initial_mode_str = initial_mode.to_string();
@@ -75,7 +71,6 @@ impl AudioEngine {
                 fsm_clone,
                 active_mode_clone,
                 is_fallback_clone,
-                visualizer_analyzer_clone,
                 initial_mode_str,
                 initial_device_str,
             );
@@ -87,16 +82,11 @@ impl AudioEngine {
             fsm,
             active_mode,
             is_fallback,
-            visualizer_analyzer,
         })
     }
 
     pub fn get_waveform_points(&self, points_count: usize) -> Vec<f32> {
-        if let Ok(viz) = self.visualizer_analyzer.lock() {
-            viz.get_waveform_points(points_count)
-        } else {
-            vec![0.0; points_count]
-        }
+        self.shared_state.get_visualizer_points(points_count)
     }
 
     pub fn send_command(&self, cmd: EngineCommand) -> Result<(), crossbeam_channel::SendError<EngineCommand>> {
@@ -166,7 +156,6 @@ impl AudioEngine {
         fsm: Arc<RwLock<PlaybackFsm>>,
         active_mode: Arc<RwLock<String>>,
         is_fallback: Arc<AtomicBool>,
-        visualizer_analyzer: Arc<Mutex<WaveformAnalyzer>>,
         mut current_mode: String,
         mut current_device: String,
     ) {
@@ -368,9 +357,6 @@ impl AudioEngine {
                     if slots >= 4096 {
                         match dec.next_interleaved_packet() {
                             Ok(Some(samples)) => {
-                                if let Ok(mut viz) = visualizer_analyzer.try_lock() {
-                                    viz.push_samples(&samples);
-                                }
                                 for s in samples {
                                     if prod.push(s).is_err() {
                                         break;

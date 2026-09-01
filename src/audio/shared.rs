@@ -139,6 +139,7 @@ impl SharedBackend {
 
                     if frames_played > 0 {
                         state.current_sample_position.fetch_add(frames_played as u64, Ordering::Relaxed);
+                        state.push_visualizer_samples(output);
                     }
                 },
                 err_callback,
@@ -224,6 +225,7 @@ impl SharedBackend {
 
                     if src_frames_consumed > 0 {
                         state.current_sample_position.fetch_add(src_frames_consumed, Ordering::Relaxed);
+                        state.push_visualizer_samples(output);
                     }
                 },
                 err_callback,

@@ -350,6 +350,7 @@ impl ExclusiveBackend {
                                 }
                                 if frames_read > 0 {
                                     state.current_sample_position.fetch_add(frames_read as u64, Ordering::Relaxed);
+                                    state.push_visualizer_samples(slice);
                                 }
                             } else {
                                 slice.fill(0.0);
@@ -378,6 +379,8 @@ impl ExclusiveBackend {
                                 }
                                 if frames_read > 0 {
                                     state.current_sample_position.fetch_add(frames_read as u64, Ordering::Relaxed);
+                                    let f32_samples: Vec<f32> = slice.iter().map(|&s| s as f32 / 32768.0).collect();
+                                    state.push_visualizer_samples(&f32_samples);
                                 }
                             } else {
                                 slice.fill(0);

@@ -7,7 +7,6 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::canvas::{Canvas, Circle, Line as CanvasLine};
 use ratatui::widgets::{Block, Borders, Gauge, Paragraph, Sparkline, Widget};
 
 pub struct ControlsView<'a> {
@@ -206,59 +205,62 @@ impl<'a> Widget for ControlsView<'a> {
                     sparkline.render(chunks[2], buf);
                 }
                 VisualizerMode::Type3Polar => {
-                    // CIRCLE: 太線トリプルライン＆高密度放射サークル波形 (ハゲウニ解消)
-                    let points_count = 64.min(self.waveform_points.len()).max(24);
-                    let mut lines = Vec::with_capacity(points_count * 3);
-                    let r_inner = 15.0f64;
-                    let r_max = 38.0f64;
-                    let delta_angle = 0.022f64;
+                    // CIRCLE: 点字Canvasを全廃し、ブロック文字 (■ / ●) によるソリッドな円形サークル描画
+                    let width = chunks[2].width as usize;
+                    let height = chunks[2].height as usize;
+                    let cx = (width as f64) / 2.0;
+                    let cy = (height as f64) / 2.0;
 
-                    for i in 0..points_count {
+                    let mut grid = vec![vec![' '; width]; height];
+
+                    // 中心基準点
+                    if (cy as usize) < height && (cx as usize) < width {
+                        grid[cy as usize][cx as usize] = '●';
+                    }
+
+                    let directions = 36;
+                    let r_inner = (height as f64 * 0.25).max(1.0);
+                    let r_max = (height as f64 * 0.85).max(r_inner + 1.0);
+
+                    for i in 0..directions {
                         let val = if i < self.waveform_points.len() {
                             self.waveform_points[i] as f64
                         } else {
                             0.0
                         };
-                        let base_angle = (i as f64 / points_count as f64) * std::f64::consts::TAU - std::f64::consts::FRAC_PI_2;
-                        let r1 = r_inner;
-                        let r2 = r_inner + val * (r_max - r_inner);
+                        let angle = (i as f64 / directions as f64) * std::f64::consts::TAU - std::f64::consts::FRAC_PI_2;
+                        let target_r = r_inner + val * (r_max - r_inner);
 
-                        // 3本の近接ラインでバーの太さを強化
-                        for &offset in &[-delta_angle, 0.0, delta_angle] {
-                            let angle = base_angle + offset;
-                            let cos_a = angle.cos();
-                            let sin_a = angle.sin();
-                            lines.push((
-                                cos_a * r1,
-                                sin_a * r1,
-                                cos_a * r2,
-                                sin_a * r2,
-                            ));
+                        let cos_a = angle.cos();
+                        let sin_a = angle.sin() * 0.52; // 文字縦横比補正
+
+                        let mut r = r_inner;
+                        while r <= target_r {
+                            let px = (cx + r * cos_a * 2.0).round() as isize;
+                            let py = (cy + r * sin_a).round() as isize;
+
+                            if px >= 0 && (px as usize) < width && py >= 0 && (py as usize) < height {
+                                grid[py as usize][px as usize] = '■';
+                            }
+                            r += 0.6;
                         }
                     }
 
-                    let canvas = Canvas::default()
-                        .block(Block::default().style(Style::default().bg(self.theme.bg_card)))
-                        .x_bounds([-45.0, 45.0])
-                        .y_bounds([-45.0, 45.0])
-                        .paint(move |ctx| {
-                            ctx.draw(&Circle {
-                                x: 0.0,
-                                y: 0.0,
-                                radius: r_inner,
-                                color: Color::Rgb(56, 189, 248),
-                            });
-                            for &(x1, y1, x2, y2) in &lines {
-                                ctx.draw(&CanvasLine {
-                                    x1,
-                                    y1,
-                                    x2,
-                                    y2,
-                                    color: Color::White,
-                                });
-                            }
-                        });
-                    canvas.render(chunks[2], buf);
+                    let lines: Vec<Line> = grid
+                        .into_iter()
+                        .map(|row_chars| {
+                            let line_str: String = row_chars.into_iter().collect();
+                            Line::from(Span::styled(
+                                line_str,
+                                Style::default()
+                                    .fg(Color::Rgb(56, 189, 248))
+                                    .bg(self.theme.bg_card)
+                                    .add_modifier(Modifier::BOLD),
+                            ))
+                        })
+                        .collect();
+
+                    Paragraph::new(lines).render(chunks[2], buf);
                 }
             }
         }

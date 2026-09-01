@@ -1,6 +1,6 @@
 use rtrb::{Consumer, Producer, RingBuffer};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub struct SharedAudioState {
     pub is_playing: AtomicBool,
@@ -11,6 +11,7 @@ pub struct SharedAudioState {
     pub sample_rate: AtomicU32,
     pub channels: AtomicU32,
     pub seek_trigger: AtomicBool,
+    pub visualizer_samples: Mutex<Vec<f32>>,
 }
 
 impl SharedAudioState {
@@ -24,6 +25,7 @@ impl SharedAudioState {
             sample_rate: AtomicU32::new(44100),
             channels: AtomicU32::new(2),
             seek_trigger: AtomicBool::new(false),
+            visualizer_samples: Mutex::new(Vec::with_capacity(2048)),
         }
     }
 
@@ -58,6 +60,46 @@ impl SharedAudioState {
         let samples = self.total_samples.load(Ordering::Relaxed);
         let rate = self.sample_rate.load(Ordering::Relaxed).max(1) as f64;
         samples as f64 / rate
+    }
+
+    pub fn push_visualizer_samples(&self, samples: &[f32]) {
+        if let Ok(mut buf) = self.visualizer_samples.try_lock() {
+            const MAX_VIZ_SAMPLES: usize = 2048;
+            buf.extend_from_slice(samples);
+            if buf.len() > MAX_VIZ_SAMPLES {
+                let overflow = buf.len() - MAX_VIZ_SAMPLES;
+                buf.drain(0..overflow);
+            }
+        }
+    }
+
+    pub fn get_visualizer_points(&self, points_count: usize) -> Vec<f32> {
+        if let Ok(buf) = self.visualizer_samples.lock() {
+            if buf.is_empty() || points_count == 0 {
+                return vec![0.0; points_count];
+            }
+            let chunk_size = (buf.len() / points_count).max(1);
+            let mut points = Vec::with_capacity(points_count);
+            for i in 0..points_count {
+                let start = i * chunk_size;
+                let end = ((i + 1) * chunk_size).min(buf.len());
+                if start >= buf.len() {
+                    points.push(0.0);
+                    continue;
+                }
+                let mut max_val = 0.0f32;
+                for &s in &buf[start..end] {
+                    let v = s.abs();
+                    if v > max_val {
+                        max_val = v;
+                    }
+                }
+                points.push(max_val.min(1.0));
+            }
+            points
+        } else {
+            vec![0.0; points_count]
+        }
     }
 }
 
