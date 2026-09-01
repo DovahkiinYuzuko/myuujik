@@ -231,9 +231,9 @@ impl App {
                 self.playlist.toggle_shuffle();
             }
             KeyCode::Char('e') => {
-                self.is_exclusive = !self.is_exclusive;
-                let mode = if self.is_exclusive { "Exclusive" } else { "Shared" };
-                self.engine.set_output_mode(mode);
+                let target_mode = if self.is_exclusive { "Shared" } else { "Exclusive" };
+                self.engine.set_output_mode(target_mode);
+                self.is_exclusive = target_mode == "Exclusive";
             }
             KeyCode::Char('d') => {
                 self.available_devices = SharedBackend::list_devices();
@@ -380,10 +380,19 @@ impl App {
                 f.render_widget(playlist_view, main_layout[0]);
 
                 // 2. 楽曲情報＆カバーアート描画
+                let is_fallback = self.engine.is_fallback();
+                let active_mode = self.engine.active_output_mode();
+                if is_fallback {
+                    self.is_exclusive = false;
+                } else {
+                    self.is_exclusive = active_mode.starts_with("Exclusive");
+                }
+
                 let track_info_view = TrackInfoView {
                     metadata: self.current_metadata.as_ref(),
-                    output_mode: &self.engine.active_output_mode(),
+                    output_mode: &active_mode,
                     is_exclusive: self.is_exclusive,
+                    is_fallback,
                     is_focused: active_pane == UiPane::TrackInfo,
                     cover_widget: &mut self.cover_widget,
                     i18n: &self.i18n,

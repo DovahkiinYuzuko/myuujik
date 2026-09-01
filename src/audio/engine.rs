@@ -301,18 +301,24 @@ impl AudioEngine {
                     EngineCommand::SetOutputMode(mode) => {
                         logger::info("AudioEngine", &format!("Switching output mode from {} to {}", current_mode, mode));
                         current_mode = mode.clone();
-                        *active_mode.write().unwrap() = mode.clone();
 
                         // 再生中の場合はストリームを安全に再構築
-                        if let Some(dec) = decoder.as_ref() {
-                            let meta = dec.metadata();
-                            let (new_prod, new_cons) = rtrb::RingBuffer::new(RING_BUFFER_SIZE);
+                        if let Some(dec) = decoder.as_mut() {
+                            let saved_secs = shared_state.current_position_secs();
                             let was_playing = shared_state.is_playing.load(Ordering::Relaxed);
+                            shared_state.is_playing.store(false, Ordering::Relaxed);
 
                             if let Some(mut old_b) = backend.take() {
                                 let _ = old_b.pause();
                                 drop(old_b);
                             }
+                            producer = None;
+
+                            // WASAPI Exclusiveデバイス解放とCOMスレッド終了の安全マージン
+                            std::thread::sleep(std::time::Duration::from_millis(25));
+
+                            let meta = dec.metadata().clone();
+                            let (new_prod, new_cons) = rtrb::RingBuffer::new(RING_BUFFER_SIZE);
 
                             let b_res = Self::init_backend(
                                 &current_mode,
@@ -328,18 +334,52 @@ impl AudioEngine {
 
                             match b_res {
                                 Ok((mut b, used_prod)) => {
+                                    let mut effective_prod = used_prod.unwrap_or(new_prod);
+
+                                    // 再生位置の正確なシーク復帰（バッファ未消費による音声スキップを解消）
+                                    if let Ok(actual) = dec.seek(saved_secs) {
+                                        let rate = shared_state.sample_rate.load(Ordering::Relaxed).max(1);
+                                        let sample_pos = (actual * rate as f64) as u64;
+                                        shared_state.current_sample_position.store(sample_pos, Ordering::Relaxed);
+                                        shared_state.seek_trigger.store(true, Ordering::Release);
+                                    }
+
+                                    // プリロール充填（新ストリーム開始時の即時アンダーラン防止）
+                                    if let Ok(Some(samples)) = dec.next_interleaved_packet() {
+                                        for s in samples {
+                                            if effective_prod.push(s).is_err() {
+                                                break;
+                                            }
+                                        }
+                                    }
+
                                     if was_playing {
                                         let _ = b.play();
+                                        shared_state.is_playing.store(true, Ordering::Relaxed);
                                     }
+
                                     backend = Some(b);
-                                    producer = Some(used_prod.unwrap_or(new_prod));
-                                    logger::info("AudioEngine", &format!("Switched backend successfully to mode: {}", current_mode));
+                                    producer = Some(effective_prod);
+                                    logger::info(
+                                        "AudioEngine",
+                                        &format!(
+                                            "Switched backend successfully to mode: {} (active: {}, fallback: {}) at {:.2}s",
+                                            current_mode,
+                                            *active_mode.read().unwrap(),
+                                            is_fallback.load(Ordering::Relaxed),
+                                            saved_secs
+                                        ),
+                                    );
                                 }
                                 Err(e) => {
                                     logger::error("AudioEngine", &format!("Failed to switch mode: {}", e));
                                     fsm.write().unwrap().transition(PlaybackEvent::DeviceError(e.to_string()));
                                 }
                             }
+                        } else {
+                            // 停止中の場合もアクティブモード名を反映
+                            *active_mode.write().unwrap() = current_mode.clone();
+                            is_fallback.store(false, Ordering::Relaxed);
                         }
                     }
                     EngineCommand::SetOutputDevice(dev) => {
@@ -434,6 +474,8 @@ impl AudioEngine {
         }
 
         // SharedBackend の構築
+        is_fallback.store(false, Ordering::Relaxed);
+        *active_mode.write().unwrap() = "Shared".to_string();
         let shared = SharedBackend::create(device_name, sample_rate, channels, consumer, state)?;
         logger::info("AudioEngine", "SharedBackend created successfully.");
         Ok((Box::new(shared), None))
@@ -500,6 +542,38 @@ mod tests {
             engine.stop();
             thread::sleep(Duration::from_millis(30));
             assert_eq!(engine.current_state(), PlaybackState::Stopped);
+        }
+    }
+
+    #[test]
+    fn test_audio_engine_output_mode_switch_during_playback() {
+        let engine = AudioEngine::new("Shared", "Default", 0.85).expect("failed to init engine");
+        let sample_wav = Path::new("sample/Kendrick Lamar - Not Like Us.wav");
+        if sample_wav.exists() {
+            engine.play_file(sample_wav);
+
+            // 再生開始待機
+            let mut waited = 0;
+            while waited < 50 && engine.current_state() != PlaybackState::Playing && !matches!(engine.current_state(), PlaybackState::Error { .. }) {
+                thread::sleep(Duration::from_millis(20));
+                waited += 1;
+            }
+
+            if engine.current_state() == PlaybackState::Playing {
+                // 再生中に排他モードへ切り替え
+                engine.set_output_mode("Exclusive");
+                thread::sleep(Duration::from_millis(100));
+                assert_eq!(engine.current_state(), PlaybackState::Playing);
+
+                // 再生中に共有モードへ再度切り替え
+                engine.set_output_mode("Shared");
+                thread::sleep(Duration::from_millis(100));
+                assert_eq!(engine.current_state(), PlaybackState::Playing);
+
+                engine.stop();
+                thread::sleep(Duration::from_millis(30));
+                assert_eq!(engine.current_state(), PlaybackState::Stopped);
+            }
         }
     }
 }

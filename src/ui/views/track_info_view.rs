@@ -12,6 +12,7 @@ pub struct TrackInfoView<'a> {
     pub metadata: Option<&'a TrackMetadata>,
     pub output_mode: &'a str,
     pub is_exclusive: bool,
+    pub is_fallback: bool,
     pub is_focused: bool,
     pub cover_widget: &'a mut CoverArtWidget,
     pub i18n: &'a I18n,
@@ -114,6 +115,8 @@ impl<'a> TrackInfoView<'a> {
 
             let mode_badge = if self.is_exclusive {
                 Span::styled(" [ EXCLUSIVE BIT-PERFECT ] ", Style::default().fg(self.theme.accent_exclusive).bg(Color::Rgb(35, 25, 10)).add_modifier(Modifier::BOLD))
+            } else if self.is_fallback {
+                Span::styled(" [ SHARED (FALLBACK) ] ", Style::default().fg(Color::Yellow).bg(Color::Rgb(35, 30, 10)).add_modifier(Modifier::BOLD))
             } else {
                 Span::styled(" [ SHARED AUDIO ] ", Style::default().fg(self.theme.primary).bg(Color::Rgb(15, 25, 45)))
             };
