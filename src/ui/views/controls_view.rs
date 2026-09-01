@@ -144,24 +144,47 @@ impl<'a> Widget for ControlsView<'a> {
         if chunks[2].height > 0 && chunks[2].width > 0 {
             match self.visualizer_mode {
                 VisualizerMode::Type3 => {
-                    // Type 3: 音量メーター (Unicode ブロック文字)
-                    let blocks = [' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+                    // METER: Unicode ブロック文字による複数行バーグラフ (底辺接地・高さフル活用)
+                    let blocks = [' ', ' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
                     let width = chunks[2].width as usize;
-                    let mut line_chars = String::with_capacity(width);
-                    for i in 0..width {
-                        let val = if i < self.waveform_points.len() {
-                            self.waveform_points[i]
-                        } else {
-                            0.0
-                        };
-                        let idx = ((val * (blocks.len() - 1) as f32).round() as usize).min(blocks.len() - 1);
-                        line_chars.push(blocks[idx]);
+                    let height = chunks[2].height as usize;
+
+                    let mut lines = Vec::with_capacity(height);
+                    for row in 0..height {
+                        // row 0 が一番上、row (height - 1) が一番下 (底辺接地)
+                        let bottom_up = height - 1 - row;
+                        let mut line_chars = String::with_capacity(width);
+
+                        for col in 0..width {
+                            let val = if col < self.waveform_points.len() {
+                                self.waveform_points[col].clamp(0.0, 1.0)
+                            } else {
+                                0.0
+                            };
+                            let total_bar_height = val * (height as f32);
+
+                            let ch = if total_bar_height >= (bottom_up + 1) as f32 {
+                                '█'
+                            } else if total_bar_height <= bottom_up as f32 {
+                                ' '
+                            } else {
+                                let frac = total_bar_height - bottom_up as f32;
+                                let idx = ((frac * 8.0).round() as usize).clamp(1, 8);
+                                blocks[idx]
+                            };
+                            line_chars.push(ch);
+                        }
+
+                        lines.push(Line::from(Span::styled(
+                            line_chars,
+                            Style::default()
+                                .fg(Color::Rgb(56, 189, 248))
+                                .bg(self.theme.bg_card)
+                                .add_modifier(Modifier::BOLD),
+                        )));
                     }
-                    let meter_line = Line::from(Span::styled(
-                        line_chars,
-                        Style::default().fg(Color::Rgb(56, 189, 248)).bg(self.theme.bg_card).add_modifier(Modifier::BOLD),
-                    ));
-                    Paragraph::new(meter_line).render(chunks[2], buf);
+
+                    Paragraph::new(lines).render(chunks[2], buf);
                 }
                 VisualizerMode::Type4 => {
                     // Type 4: 波状の音量メーター (スパークライン波形)

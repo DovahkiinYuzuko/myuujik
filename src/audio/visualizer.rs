@@ -17,9 +17,9 @@ impl VisualizerMode {
 
     pub fn display_name(self) -> &'static str {
         match self {
-            VisualizerMode::Type3 => "AviUtl Type 3 (Meter)",
-            VisualizerMode::Type4 => "AviUtl Type 4 (Wave)",
-            VisualizerMode::Type3Polar => "AviUtl Type 3 (Polar)",
+            VisualizerMode::Type3 => "METER",
+            VisualizerMode::Type4 => "WAVE",
+            VisualizerMode::Type3Polar => "CIRCLE",
         }
     }
 }
@@ -263,10 +263,13 @@ mod tests {
         // モードの遷移テスト
         let mode = VisualizerMode::default();
         assert_eq!(mode, VisualizerMode::Type3);
+        assert_eq!(mode.display_name(), "METER");
         let next_mode = mode.next();
         assert_eq!(next_mode, VisualizerMode::Type4);
+        assert_eq!(next_mode.display_name(), "WAVE");
         let polar_mode = next_mode.next();
         assert_eq!(polar_mode, VisualizerMode::Type3Polar);
+        assert_eq!(polar_mode.display_name(), "CIRCLE");
         assert_eq!(polar_mode.next(), VisualizerMode::Type3);
     }
 }
