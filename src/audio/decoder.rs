@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::{Decoder, DecoderOptions, CODEC_TYPE_AAC, CODEC_TYPE_ALAC, CODEC_TYPE_FLAC, CODEC_TYPE_MP3, CODEC_TYPE_NULL, CODEC_TYPE_OPUS, CODEC_TYPE_PCM_F32LE, CODEC_TYPE_PCM_S16LE, CODEC_TYPE_PCM_S24LE, CODEC_TYPE_PCM_S32LE, CODEC_TYPE_VORBIS};
+use symphonia::core::codecs::{Decoder, DecoderOptions, CODEC_TYPE_AAC, CODEC_TYPE_ALAC, CODEC_TYPE_FLAC, CODEC_TYPE_MP3, CODEC_TYPE_OPUS, CODEC_TYPE_PCM_F32LE, CODEC_TYPE_PCM_S16LE, CODEC_TYPE_PCM_S24LE, CODEC_TYPE_PCM_S32LE, CODEC_TYPE_VORBIS};
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::{MetadataOptions, StandardTagKey, Tag, Value};
@@ -56,13 +56,17 @@ impl AudioDecoder {
 
         let mut format = probed.format;
 
-        // デフォルトトラックの探索
-        let track = format
+        // デコード可能なオーディオトラックの探索（映像や字幕トラックを無視し、有効なオーディオを検出）
+        let (track, decoder) = format
             .tracks()
             .iter()
-            .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
-            .ok_or("No playable audio track found in media container")?
-            .clone();
+            .find_map(|t| {
+                get_codecs()
+                    .make(&t.codec_params, &DecoderOptions::default())
+                    .ok()
+                    .map(|dec| (t.clone(), dec))
+            })
+            .ok_or("No playable audio track found in media container")?;
 
         let track_id = track.id;
         let sample_rate = track.codec_params.sample_rate.unwrap_or(44100);
@@ -89,9 +93,6 @@ impl AudioDecoder {
                 });
             }
         }
-
-        // デコーダの生成
-        let decoder = get_codecs().make(&track.codec_params, &DecoderOptions::default())?;
 
         let metadata = TrackMetadata {
             file_path: path_buf,
@@ -342,5 +343,36 @@ mod tests {
             assert!(!s.is_nan());
             assert!(!s.is_infinite());
         }
+    }
+
+    #[test]
+    fn test_decode_mp4_container_sample() {
+        let sample_m4a = Path::new("sample/Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster).m4a");
+        if !sample_m4a.exists() {
+            eprintln!("Skipping test: sample file not found");
+            return;
+        }
+
+        // MP4拡張子として一時コピーしてコンテナパースをテスト
+        let temp_mp4 = Path::new("sample/temp_test_rick_astley.mp4");
+        std::fs::copy(sample_m4a, temp_mp4).expect("Failed to copy sample as mp4");
+
+        let res = AudioDecoder::open(temp_mp4);
+        let mut decoder = res.expect("Failed to open MP4 container");
+        let meta = decoder.metadata();
+        assert!(meta.sample_rate > 0);
+        assert!(meta.channels > 0);
+        assert_eq!(meta.codec_name, "AAC");
+
+        // パケットデコード
+        let packet = decoder.next_interleaved_packet().expect("Failed to decode mp4 packet");
+        assert!(packet.is_some());
+
+        // シーク動作検証
+        assert!(decoder.seek(5.0).is_ok());
+        assert!(decoder.next_interleaved_packet().unwrap().is_some());
+
+        // テスト用一時ファイルのクリーンアップ
+        let _ = std::fs::remove_file(temp_mp4);
     }
 }
