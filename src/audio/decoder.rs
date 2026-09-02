@@ -86,7 +86,12 @@ impl AudioDecoder {
         let codec_name = Self::format_codec(track.codec_params.codec);
 
         let duration_secs = track.codec_params.n_frames.map(|frames| {
-            frames as f64 / sample_rate as f64
+            if let Some(tb) = track.codec_params.time_base {
+                let time = tb.calc_time(frames);
+                time.seconds as f64 + time.frac
+            } else {
+                frames as f64 / sample_rate as f64
+            }
         });
 
         // メタデータおよびカバーアートの抽出
@@ -399,6 +404,10 @@ mod tests {
         let meta = decoder.metadata();
         assert!(meta.sample_rate > 0);
         assert_eq!(meta.codec_name, "Opus");
+        // 228.181秒 (約3分48秒) であることを検証
+        assert!(meta.duration_secs.is_some());
+        let dur = meta.duration_secs.unwrap();
+        assert!((dur - 228.181).abs() < 1.0, "Expected around 228s, got {:.3}s", dur);
 
         // パケットデコード
         let packet = decoder.next_interleaved_packet().expect("Failed to decode webm opus packet");
