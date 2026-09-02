@@ -6,6 +6,7 @@ use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::{MetadataOptions, StandardTagKey, Tag, Value};
 use symphonia::core::probe::Hint;
+use symphonia::core::units::TimeBase;
 use symphonia::default::get_probe;
 use symphonia_adapter_libopus::OpusDecoder;
 
@@ -42,6 +43,7 @@ pub struct AudioDecoder {
     format: Box<dyn FormatReader>,
     decoder: Box<dyn Decoder>,
     track_id: u32,
+    time_base: Option<TimeBase>,
     metadata: TrackMetadata,
     cover_art: Option<CoverArt>,
     sample_buf: Option<SampleBuffer<f32>>,
@@ -122,10 +124,13 @@ impl AudioDecoder {
             codec_name,
         };
 
+        let time_base = track.codec_params.time_base;
+
         Ok(Self {
             format,
             decoder,
             track_id,
+            time_base,
             metadata,
             cover_art,
             sample_buf: None,
@@ -201,8 +206,11 @@ impl AudioDecoder {
         )?;
         self.decoder.reset();
 
-        let actual_secs = if self.metadata.sample_rate > 0 {
-            (actual.actual_ts as f64 / self.metadata.sample_rate as f64).min(target_secs.max(0.0))
+        let actual_secs = if let Some(tb) = self.time_base {
+            let time = tb.calc_time(actual.actual_ts);
+            time.seconds as f64 + time.frac
+        } else if self.metadata.sample_rate > 0 {
+            actual.actual_ts as f64 / self.metadata.sample_rate as f64
         } else {
             target_secs
         };
@@ -419,8 +427,10 @@ mod tests {
             assert!(!s.is_infinite());
         }
 
-        // シーク動作検証
-        assert!(decoder.seek(2.0).is_ok());
-        assert!(decoder.next_interleaved_packet().unwrap().is_some());
+        // シーク動作検証 (20秒位置へシークし、到着位置が概ね20秒であることを検証)
+        let seek_res = decoder.seek(20.0).expect("Failed to seek in WebM");
+        assert!((seek_res - 20.0).abs() < 5.0, "Expected seek position near 20s, got {:.3}s", seek_res);
+        let next_packet = decoder.next_interleaved_packet();
+        assert!(next_packet.unwrap().is_some());
     }
 }
