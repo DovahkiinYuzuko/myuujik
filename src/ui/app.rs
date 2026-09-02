@@ -38,6 +38,7 @@ pub struct App {
     pub device_modal_idx: usize,
     pub error_message: Option<String>,
     pub current_metadata: Option<TrackMetadata>,
+    pub pending_cd_disc_id: Option<(String, String)>,
     pub is_exclusive: bool,
     pub should_quit: bool,
     pub last_engine_state: PlaybackState,
@@ -86,6 +87,7 @@ impl App {
             device_modal_idx: 0,
             error_message: None,
             current_metadata: None,
+            pending_cd_disc_id: None,
             is_exclusive,
             should_quit: false,
             last_engine_state: PlaybackState::Stopped,
@@ -102,13 +104,7 @@ impl App {
         // 初期曲があれば先頭曲を準備して再生開始
         if let Some(track) = app.playlist.all_tracks().first().cloned() {
             app.playlist.select_and_play_path(&track.path);
-            if let Ok(decoder) = AudioDecoder::open(&track.path) {
-                let meta = decoder.metadata().clone();
-                let cover = decoder.cover_art().cloned();
-                app.current_metadata = Some(meta);
-                app.cover_widget.update_cover_art(&track.path.to_string_lossy(), cover.as_ref());
-            }
-            app.engine.play_file(&track.path);
+            app.apply_track_playback(&track.path);
         }
 
         Ok(app)
@@ -132,38 +128,63 @@ impl App {
         }
 
         if let Some(track) = self.playlist.select_and_play_entry(cursor).cloned() {
-            if let Ok(decoder) = AudioDecoder::open(&track.path) {
-                let meta = decoder.metadata().clone();
-                let cover = decoder.cover_art().cloned();
-                self.current_metadata = Some(meta);
-                self.cover_widget.update_cover_art(&track.path.to_string_lossy(), cover.as_ref());
-            }
-
-            self.engine.play_file(&track.path);
+            self.apply_track_playback(&track.path);
         }
     }
 
     pub fn play_next_track(&mut self) {
         if let Some(track) = self.playlist.next_track().cloned() {
-            if let Ok(decoder) = AudioDecoder::open(&track.path) {
-                let meta = decoder.metadata().clone();
-                let cover = decoder.cover_art().cloned();
-                self.current_metadata = Some(meta);
-                self.cover_widget.update_cover_art(&track.path.to_string_lossy(), cover.as_ref());
-            }
-            self.engine.play_file(&track.path);
+            self.apply_track_playback(&track.path);
         }
     }
 
     pub fn play_prev_track(&mut self) {
         if let Some(track) = self.playlist.prev_track().cloned() {
-            if let Ok(decoder) = AudioDecoder::open(&track.path) {
-                let meta = decoder.metadata().clone();
-                let cover = decoder.cover_art().cloned();
-                self.current_metadata = Some(meta);
-                self.cover_widget.update_cover_art(&track.path.to_string_lossy(), cover.as_ref());
+            self.apply_track_playback(&track.path);
+        }
+    }
+
+    /// トラックパスからのデコーダ生成、メタデータ/カバーアート取得、および再生開始の共通処理
+    pub fn apply_track_playback(&mut self, path: &std::path::Path) {
+        if let Ok(decoder) = AudioDecoder::open(path) {
+            let meta = decoder.metadata().clone();
+            let cover = decoder.cover_art().cloned();
+            let disc_id = decoder.disc_id().map(|s| s.to_string());
+            let path_str = path.to_string_lossy().to_string();
+
+            if cover.is_none() {
+                if let Some(did) = disc_id {
+                    self.pending_cd_disc_id = Some((path_str.clone(), did));
+                } else {
+                    self.pending_cd_disc_id = None;
+                }
+            } else {
+                self.pending_cd_disc_id = None;
             }
-            self.engine.play_file(&track.path);
+
+            self.current_metadata = Some(meta);
+            self.cover_widget.update_cover_art(&path_str, cover.as_ref());
+        }
+        self.engine.play_file(path);
+    }
+
+    /// CD カバーアートの非同期ダウンロード完了を検知して UI に反映する
+    pub fn check_pending_cover_art(&mut self) {
+        if let Some((track_key, disc_id)) = &self.pending_cd_disc_id {
+            if let Some(cache_path) = crate::audio::cd::metadata::get_cached_cover_art_path(disc_id) {
+                if cache_path.exists() {
+                    if let Ok(data) = std::fs::read(&cache_path) {
+                        if !data.is_empty() {
+                            let cover = crate::audio::decoder::CoverArt {
+                                mime_type: "image/jpeg".to_string(),
+                                data,
+                            };
+                            self.cover_widget.update_cover_art(track_key, Some(&cover));
+                            self.pending_cd_disc_id = None;
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -517,6 +538,9 @@ impl App {
 
             // リアルタイム波形データの更新
             frame_count = frame_count.wrapping_add(1);
+            if frame_count % 30 == 0 {
+                self.check_pending_cover_art();
+            }
             if let Ok(term_size) = terminal.size() {
                 let right_width = (term_size.width as f32 * 0.62).round() as usize;
                 let target_len = right_width.saturating_sub(4).clamp(16, 128);

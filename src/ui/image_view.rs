@@ -25,8 +25,8 @@ impl CoverArtWidget {
 
     /// カバーアートの即時リサイズ（<=300x300）およびシングルキャッシュ更新
     pub fn update_cover_art(&mut self, track_key: &str, cover: Option<&CoverArt>) {
-        if self.cached_track_path.as_deref() == Some(track_key) {
-            return; // 既にキャッシュ済み
+        if self.cached_track_path.as_deref() == Some(track_key) && (cover.is_none() || self.image_protocol.is_some()) {
+            return; // 既に画像ロード済み、または変化なし
         }
 
         self.cached_track_path = Some(track_key.to_string());

@@ -157,8 +157,165 @@ pub fn calculate_musicbrainz_disc_id(
     base64_url_safe(&digest)
 }
 
-/// CD ドライブ内または周辺キャッシュからのアルバムアート画像探索
-pub fn find_cd_album_art(drive_letter: char) -> Option<(String, Vec<u8>)> {
+/// myuujik の CD カバーアートキャッシュディレクトリを取得（存在しない場合は作成）
+pub fn get_cd_cache_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+            let mut p = PathBuf::from(local_app_data);
+            p.push("myuujik");
+            p.push("cache");
+            p.push("albumart");
+            let _ = std::fs::create_dir_all(&p);
+            return Some(p);
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        if let Some(home) = std::env::var_os("HOME") {
+            let mut p = PathBuf::from(home);
+            p.push(".cache");
+            p.push("myuujik");
+            p.push("albumart");
+            let _ = std::fs::create_dir_all(&p);
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// DiscID からキャッシュ画像ファイルパスを取得する
+pub fn get_cached_cover_art_path(disc_id: &str) -> Option<PathBuf> {
+    let sanitized_id: String = disc_id
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
+        .collect();
+    let mut path = get_cd_cache_dir()?;
+    path.push(format!("{}.jpg", sanitized_id));
+    Some(path)
+}
+
+/// MusicBrainz API および Cover Art Archive を経由してジャケット写真を同期取得・キャッシュ保存する
+pub fn fetch_cover_art_from_musicbrainz(disc_id: &str) -> Option<PathBuf> {
+    let cache_path = get_cached_cover_art_path(disc_id)?;
+    if cache_path.exists() {
+        if let Ok(meta) = std::fs::metadata(&cache_path) {
+            if meta.len() > 0 {
+                crate::logger::info("CdMetadata", &format!("Using cached album art for DiscID: {}", disc_id));
+                return Some(cache_path);
+            }
+        }
+    }
+
+    crate::logger::info("CdMetadata", &format!("Fetching cover art from MusicBrainz for DiscID: {}", disc_id));
+
+    // 1. MusicBrainz API に問い合わせて Release MBID を取得
+    let mb_url = format!("https://musicbrainz.org/ws/2/discid/{}?fmt=json", disc_id);
+    let user_agent = "myuujik/0.1.0 ( rikuichi0212@gmail.com )";
+
+    let curl_bin = if cfg!(windows) { "curl.exe" } else { "curl" };
+
+    let mb_output = std::process::Command::new(curl_bin)
+        .args([
+            "-s",
+            "-A",
+            user_agent,
+            "--max-time",
+            "5",
+            &mb_url,
+        ])
+        .output()
+        .ok()?;
+
+    if !mb_output.status.success() {
+        crate::logger::warn("CdMetadata", &format!("MusicBrainz query failed for DiscID: {}", disc_id));
+        return None;
+    }
+
+    let json_text = String::from_utf8_lossy(&mb_output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&json_text).ok()?;
+    let mbid = parsed.get("releases")?
+        .as_array()?
+        .first()?
+        .get("id")?
+        .as_str()?;
+
+    crate::logger::info("CdMetadata", &format!("Found MusicBrainz Release MBID: {}", mbid));
+
+    // 2. Cover Art Archive からジャケット画像を取得
+    let caa_url = format!("https://coverartarchive.org/release/{}/front-250", mbid);
+    let temp_path = cache_path.with_extension("tmp");
+
+    let caa_output = std::process::Command::new(curl_bin)
+        .args([
+            "-s",
+            "-L", // リダイレクト追従
+            "-A",
+            user_agent,
+            "--max-time",
+            "10",
+            "-o",
+            temp_path.to_str()?,
+            &caa_url,
+        ])
+        .output()
+        .ok()?;
+
+    if !caa_output.status.success() || !temp_path.exists() {
+        crate::logger::warn("CdMetadata", &format!("Cover Art Archive query failed for MBID: {}", mbid));
+        let _ = std::fs::remove_file(&temp_path);
+        return None;
+    }
+
+    if let Ok(meta) = std::fs::metadata(&temp_path) {
+        if meta.len() > 0 {
+            if std::fs::rename(&temp_path, &cache_path).is_ok() {
+                crate::logger::info("CdMetadata", &format!("Successfully saved cover art to: {:?}", cache_path));
+                return Some(cache_path);
+            }
+        }
+    }
+
+    let _ = std::fs::remove_file(&temp_path);
+    None
+}
+
+/// バックグラウンドスレッドで MusicBrainz からのジャケット写真取得を開始する
+pub fn trigger_cd_cover_art_fetch(disc_id: &str) {
+    if let Some(path) = get_cached_cover_art_path(disc_id) {
+        if path.exists() {
+            if let Ok(meta) = std::fs::metadata(&path) {
+                if meta.len() > 0 {
+                    return; // 既にキャッシュ済み
+                }
+            }
+        }
+    }
+
+    let disc_id_owned = disc_id.to_string();
+    std::thread::spawn(move || {
+        crate::logger::info("CdMetadata", &format!("Background cover art fetch started for DiscID: {}", disc_id_owned));
+        let _ = fetch_cover_art_from_musicbrainz(&disc_id_owned);
+    });
+}
+
+/// CD ドライブ内または周辺キャッシュ、オンラインからのアルバムアート画像探索
+pub fn find_cd_album_art(drive_letter: char, disc_id: Option<&str>) -> Option<(String, Vec<u8>)> {
+    // 0. ローカルキャッシュに存在するか確認
+    if let Some(did) = disc_id {
+        if let Some(cache_path) = get_cached_cover_art_path(did) {
+            if cache_path.exists() {
+                if let Ok(data) = std::fs::read(&cache_path) {
+                    if !data.is_empty() {
+                        return Some(("image/jpeg".to_string(), data));
+                    }
+                }
+            }
+        }
+        // キャッシュに無ければバックグラウンドでオンライン取得を発火
+        trigger_cd_cover_art_fetch(did);
+    }
+
     let drive_root = format!("{}:\\", drive_letter);
     let root_path = Path::new(&drive_root);
 
@@ -235,5 +392,13 @@ mod tests {
         assert_eq!(disc_id.len(), 28);
         assert!(!disc_id.contains('/'));
         assert!(!disc_id.contains('+'));
+    }
+
+    #[test]
+    fn test_get_cached_cover_art_path() {
+        let path = get_cached_cover_art_path("test-disc_id.123");
+        assert!(path.is_some());
+        let p = path.unwrap();
+        assert!(p.to_string_lossy().ends_with("test-disc_id.123.jpg"));
     }
 }
