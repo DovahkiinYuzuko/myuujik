@@ -544,6 +544,58 @@ impl PlaylistManager {
         self.queue.front()
     }
 
+    /// 次に再生される予定のトラックを状態を変更せずに取得する（プリロード用）。
+    pub fn peek_next_track(&self) -> Option<&PlaylistItem> {
+        if self.all_tracks.is_empty() {
+            return None;
+        }
+
+        // 1. 再生予約キューが存在する場合、キュー先頭のトラックを返す
+        for queue_path in &self.queue {
+            if let Some(track) = self.all_tracks.iter().find(|t| &t.path == queue_path) {
+                return Some(track);
+            }
+        }
+
+        // 2. 1曲リピートの場合、現在曲を返す
+        if self.repeat_mode == RepeatMode::Single {
+            if let Some(ref path) = self.current_playing_path {
+                return self.all_tracks.iter().find(|t| &t.path == path);
+            }
+        }
+
+        // 3. シャッフル有効の場合
+        if self.shuffle_enabled && !self.shuffle_indices.is_empty() {
+            if self.shuffle_pos + 1 < self.shuffle_indices.len() {
+                let next_idx = self.shuffle_indices[self.shuffle_pos + 1];
+                return self.all_tracks.get(next_idx);
+            } else if self.repeat_mode == RepeatMode::All {
+                let next_idx = self.shuffle_indices[0];
+                return self.all_tracks.get(next_idx);
+            } else {
+                return None;
+            }
+        }
+
+        // 4. 通常順再生
+        let current_pos = self.current_playing_path.as_ref().and_then(|p| {
+            self.all_tracks.iter().position(|t| &t.path == p)
+        });
+
+        match current_pos {
+            Some(curr) => {
+                if curr + 1 < self.all_tracks.len() {
+                    Some(&self.all_tracks[curr + 1])
+                } else if self.repeat_mode == RepeatMode::All {
+                    Some(&self.all_tracks[0])
+                } else {
+                    None
+                }
+            }
+            None => self.all_tracks.first(),
+        }
+    }
+
     pub fn next_track(&mut self) -> Option<&PlaylistItem> {
         if self.all_tracks.is_empty() {
             return None;

@@ -13,8 +13,15 @@ use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::Duration;
 
+#[derive(Debug, Clone)]
+pub enum EngineNotification {
+    TrackTransitioned(PathBuf, crate::audio::decoder::TrackMetadata),
+}
+
 pub enum EngineCommand {
     PlayPath(PathBuf),
+    PreloadNext(PathBuf),
+    ClearPreload,
     Pause,
     Resume,
     TogglePause,
@@ -28,6 +35,7 @@ pub enum EngineCommand {
 #[derive(Clone)]
 pub struct AudioEngine {
     cmd_tx: Sender<EngineCommand>,
+    notif_rx: Receiver<EngineNotification>,
     shared_state: Arc<SharedAudioState>,
     fsm: Arc<RwLock<PlaybackFsm>>,
     active_mode: Arc<RwLock<String>>,
@@ -41,6 +49,7 @@ impl AudioEngine {
         initial_volume: f32,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let (cmd_tx, cmd_rx) = unbounded::<EngineCommand>();
+        let (notif_tx, notif_rx) = unbounded::<EngineNotification>();
         let shared_state = Arc::new(SharedAudioState::new());
         shared_state.set_volume(initial_volume);
 
@@ -75,6 +84,7 @@ impl AudioEngine {
 
             Self::worker_loop(
                 cmd_rx,
+                notif_tx,
                 shared_state_clone,
                 fsm_clone,
                 active_mode_clone,
@@ -91,11 +101,24 @@ impl AudioEngine {
 
         Ok(Self {
             cmd_tx,
+            notif_rx,
             shared_state,
             fsm,
             active_mode,
             is_fallback,
         })
+    }
+
+    pub fn preload_next<P: AsRef<Path>>(&self, path: P) {
+        let _ = self.send_command(EngineCommand::PreloadNext(path.as_ref().to_path_buf()));
+    }
+
+    pub fn clear_preload(&self) {
+        let _ = self.send_command(EngineCommand::ClearPreload);
+    }
+
+    pub fn poll_notification(&self) -> Option<EngineNotification> {
+        self.notif_rx.try_recv().ok()
     }
 
     pub fn get_waveform_points(&self, points_count: usize) -> Vec<f32> {
@@ -172,6 +195,7 @@ impl AudioEngine {
 
     fn worker_loop(
         cmd_rx: Receiver<EngineCommand>,
+        notif_tx: Sender<EngineNotification>,
         shared_state: Arc<SharedAudioState>,
         fsm: Arc<RwLock<PlaybackFsm>>,
         active_mode: Arc<RwLock<String>>,
@@ -180,6 +204,7 @@ impl AudioEngine {
         mut current_device: String,
     ) {
         let mut decoder: Option<AudioDecoder> = None;
+        let mut preloaded: Option<(PathBuf, AudioDecoder)> = None;
         let mut backend: Option<Box<dyn AudioOutputBackend>> = None;
         let mut producer: Option<rtrb::Producer<f32>> = None;
         let mut pending_samples: Vec<f32> = Vec::new();
@@ -203,13 +228,34 @@ impl AudioEngine {
                 };
 
                 match cmd {
+                    EngineCommand::PreloadNext(path) => {
+                        if preloaded.as_ref().map(|(p, _)| p) == Some(&path) {
+                            logger::debug("AudioEngine", &format!("Next track already preloaded: {:?}", path));
+                        } else {
+                            logger::info("AudioEngine", &format!("Preloading next track in background: {:?}", path));
+                            match AudioDecoder::open(&path) {
+                                Ok(dec) => {
+                                    logger::info("AudioEngine", &format!("Successfully preloaded: {:?}", path));
+                                    preloaded = Some((path, dec));
+                                }
+                                Err(e) => {
+                                    logger::warn("AudioEngine", &format!("Failed to preload track {:?}: {}", path, e));
+                                    preloaded = None;
+                                }
+                            }
+                        }
+                    }
+                    EngineCommand::ClearPreload => {
+                        preloaded = None;
+                    }
                     EngineCommand::PlayPath(path) => {
                         logger::info("AudioEngine", &format!("PlayPath command received: {:?}", path));
                         fsm.write().unwrap().transition(PlaybackEvent::Play(0));
                         shared_state.is_playing.store(false, Ordering::Relaxed);
                         shared_state.current_sample_position.store(0, Ordering::Relaxed);
 
-                        // 旧バックエンドの排他ロック（WASAPI Exclusive等）およびリングバッファを先行解放
+                        // 手動選曲時はプリロードおよび旧バックエンドをクリア
+                        preloaded = None;
                         backend = None;
                         producer = None;
                         pending_samples.clear();
@@ -315,6 +361,7 @@ impl AudioEngine {
                         backend = None;
                         producer = None;
                         decoder = None;
+                        preloaded = None;
                         pending_samples.clear();
                         pending_offset = 0;
                         is_eof = false;
@@ -502,9 +549,39 @@ impl AudioEngine {
                                     }
                                 }
                                 Ok(None) => {
-                                    logger::info("AudioEngine", "Decoder reached EOF. Draining remaining ring buffer samples...");
-                                    is_eof = true;
-                                    break;
+                                    logger::info("AudioEngine", "Decoder reached EOF.");
+                                    if let Some((next_path, next_dec)) = preloaded.take() {
+                                        let curr_rate = shared_state.sample_rate.load(Ordering::Relaxed);
+                                        let curr_channels = shared_state.channels.load(Ordering::Relaxed);
+                                        let next_meta = next_dec.metadata().clone();
+
+                                        if next_meta.sample_rate == curr_rate && (next_meta.channels as u32) == curr_channels {
+                                            logger::info(
+                                                "AudioEngine",
+                                                &format!("Executing seamless gapless transition to next track: {:?}", next_path),
+                                            );
+                                            if let Some(dur) = next_meta.duration_secs {
+                                                let total_frames = (dur * next_meta.sample_rate as f64) as u64;
+                                                shared_state.total_samples.store(total_frames, Ordering::Relaxed);
+                                            } else {
+                                                shared_state.total_samples.store(0, Ordering::Relaxed);
+                                            }
+                                            shared_state.current_sample_position.store(0, Ordering::Relaxed);
+
+                                            let _ = notif_tx.send(EngineNotification::TrackTransitioned(next_path, next_meta));
+                                            *dec = next_dec;
+                                            continue;
+                                        } else {
+                                            logger::info("AudioEngine", "Next track has different audio format. Waiting for buffer drain.");
+                                            preloaded = Some((next_path, next_dec));
+                                            is_eof = true;
+                                            break;
+                                        }
+                                    } else {
+                                        logger::info("AudioEngine", "Draining remaining ring buffer samples...");
+                                        is_eof = true;
+                                        break;
+                                    }
                                 }
                                 Err(e) => {
                                     logger::error("AudioEngine", &format!("Decoding packet error: {}", e));
@@ -522,11 +599,71 @@ impl AudioEngine {
 
                     // 3. EOF 到達後の残サンプル完全排出（ドレイン）待機
                     if is_eof && pending_offset >= pending_samples.len() {
-                        // リングバッファがすべてコンシューマに読み出されたか（空になったか）
                         let buffer_drained = prod.slots() >= RING_BUFFER_SIZE;
                         if buffer_drained {
-                            if let Some(drain_start) = eof_drain_started {
-                                // ハードウェア側の出力遅延（DACやOSバッファの再生完了）として50ms待機
+                            if let Some((next_path, mut next_dec)) = preloaded.take() {
+                                logger::info(
+                                    "AudioEngine",
+                                    &format!("Buffer drained. Starting preloaded track with new format: {:?}", next_path),
+                                );
+                                let _ = backend.take();
+                                let _ = producer.take();
+                                pending_samples.clear();
+                                pending_offset = 0;
+                                is_eof = false;
+                                eof_drain_started = None;
+
+                                let next_meta = next_dec.metadata().clone();
+                                shared_state.sample_rate.store(next_meta.sample_rate, Ordering::Relaxed);
+                                shared_state.channels.store(next_meta.channels as u32, Ordering::Relaxed);
+                                if let Some(dur) = next_meta.duration_secs {
+                                    let total_frames = (dur * next_meta.sample_rate as f64) as u64;
+                                    shared_state.total_samples.store(total_frames, Ordering::Relaxed);
+                                } else {
+                                    shared_state.total_samples.store(0, Ordering::Relaxed);
+                                }
+                                shared_state.current_sample_position.store(0, Ordering::Relaxed);
+
+                                let (_new_prod, new_cons) = rtrb::RingBuffer::new(RING_BUFFER_SIZE);
+                                let b_res = Self::init_backend(
+                                    &current_mode,
+                                    &current_device,
+                                    next_meta.sample_rate,
+                                    next_meta.channels,
+                                    next_meta.bits_per_sample.unwrap_or(16) as u16,
+                                    new_cons,
+                                    Arc::clone(&shared_state),
+                                    &is_fallback,
+                                    &active_mode,
+                                );
+                                match b_res {
+                                    Ok((mut b, mut effective_prod)) => {
+                                        // プリロール充填
+                                        if let Some(ref mut prod) = effective_prod {
+                                            if let Ok(Some(samples)) = next_dec.next_interleaved_packet() {
+                                                for s in samples {
+                                                    if prod.push(s).is_err() {
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        let _ = b.play();
+                                        backend = Some(b);
+                                        producer = effective_prod;
+                                        decoder = Some(next_dec);
+                                        shared_state.is_playing.store(true, Ordering::Relaxed);
+                                        let _ = notif_tx.send(EngineNotification::TrackTransitioned(next_path, next_meta));
+                                        continue;
+                                    }
+                                    Err(e) => {
+                                        logger::error("AudioEngine", &format!("Failed to start preloaded track: {}", e));
+                                        fsm.write().unwrap().transition(PlaybackEvent::DeviceError(e.to_string()));
+                                        break;
+                                    }
+                                }
+                            } else if let Some(drain_start) = eof_drain_started {
                                 if drain_start.elapsed() >= Duration::from_millis(50) {
                                     logger::info("AudioEngine", "Track finished naturally after full buffer drain.");
                                     fsm.write().unwrap().transition(PlaybackEvent::TrackFinished);
@@ -715,6 +852,69 @@ mod tests {
                 }
                 assert_eq!(engine.current_state(), PlaybackState::Stopped);
             }
+        }
+    }
+
+    #[test]
+    fn test_audio_engine_gapless_preloading_and_hotswap() {
+        let engine = AudioEngine::new("Mock", "Default", 0.85).expect("failed to init engine");
+        let sample_wav = Path::new("sample/Kendrick Lamar - Not Like Us.wav");
+        let sample_mp3 = Path::new("sample/Coolio - Gangsta's Paradise (feat. L.V.) [Official Music Video].mp3");
+
+        if sample_wav.exists() && sample_mp3.exists() {
+            engine.play_file(sample_wav);
+            // プリロード送信
+            engine.preload_next(sample_mp3);
+
+            // 再生開始待機
+            let mut waited = 0;
+            while waited < 50 && engine.current_state() != PlaybackState::Playing && !matches!(engine.current_state(), PlaybackState::Error { .. }) {
+                thread::sleep(Duration::from_millis(20));
+                waited += 1;
+            }
+
+            if engine.current_state() == PlaybackState::Playing {
+                // 終端手前へシーク
+                let dur = engine.total_duration_secs();
+                if dur > 1.0 {
+                    engine.seek(dur - 0.2);
+                }
+
+                // EOF到達とホットスワップ通知の待機（最大2秒）
+                let mut transitioned = false;
+                for _ in 0..100 {
+                    thread::sleep(Duration::from_millis(20));
+                    if let Some(EngineNotification::TrackTransitioned(path, _)) = engine.poll_notification() {
+                        assert_eq!(path, sample_mp3);
+                        transitioned = true;
+                        break;
+                    }
+                }
+                assert!(transitioned, "Expected gapless track transition notification");
+
+                engine.stop();
+            }
+        }
+    }
+
+    #[test]
+    fn test_audio_engine_preload_cancel_on_manual_play() {
+        let engine = AudioEngine::new("Mock", "Default", 0.85).expect("failed to init engine");
+        let sample_wav = Path::new("sample/Kendrick Lamar - Not Like Us.wav");
+        let sample_mp3 = Path::new("sample/Coolio - Gangsta's Paradise (feat. L.V.) [Official Music Video].mp3");
+
+        if sample_wav.exists() && sample_mp3.exists() {
+            engine.play_file(sample_wav);
+            engine.preload_next(sample_mp3);
+            thread::sleep(Duration::from_millis(50));
+
+            // 手動選曲で別の曲（あるいは同じ曲）を再生 -> プリロードは安全に破棄される
+            engine.play_file(sample_wav);
+            thread::sleep(Duration::from_millis(50));
+
+            // 明示的クリア
+            engine.clear_preload();
+            engine.stop();
         }
     }
 }

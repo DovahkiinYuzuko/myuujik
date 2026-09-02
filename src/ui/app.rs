@@ -1,5 +1,5 @@
 use crate::audio::decoder::{AudioDecoder, TrackMetadata};
-use crate::audio::engine::AudioEngine;
+use crate::audio::engine::{AudioEngine, EngineNotification};
 use crate::audio::shared::SharedBackend;
 use crate::audio::traits::AudioDeviceInfo;
 use crate::audio::visualizer::{VisualizerMode, WaveformAnalyzer};
@@ -210,6 +210,23 @@ impl App {
             self.track_changed_at = Instant::now();
         }
         self.engine.play_file(path);
+    }
+
+    /// ギャップレス再生で次曲へ遷移した際の UI 状態（メタデータ・カバーアート・歌詞）同期処理
+    pub fn apply_gapless_track_transition(&mut self, path: &std::path::Path, meta: TrackMetadata) {
+        self.playlist.select_and_play_path(path);
+        self.current_lyrics = crate::audio::lyrics::load_for_track(path);
+        self.current_metadata = Some(meta);
+
+        let cover = if let Ok(decoder) = AudioDecoder::open(path) {
+            decoder.cover_art().cloned()
+        } else {
+            None
+        };
+        let path_str = path.to_string_lossy().to_string();
+        self.cover_widget.update_cover_art(&path_str, cover.as_ref());
+        self.track_changed_at = Instant::now();
+        self.cursor_moved_at = Instant::now();
     }
 
     /// CD カバーアートおよびメタデータの非同期ダウンロード完了を検知して UI に反映する
@@ -926,7 +943,28 @@ impl App {
             last_frame_time = Instant::now();
             let current_engine_state = self.engine.current_state();
 
-            // 再生中から終了状態への自然遷移時のみ、次の曲へ進む
+            // ギャップレス再生通知の受信処理（ホットスワップ後のUI同期）
+            while let Some(notif) = self.engine.poll_notification() {
+                match notif {
+                    EngineNotification::TrackTransitioned(path, meta) => {
+                        crate::logger::info("App", &format!("Handling gapless track transition in UI: {:?}", path));
+                        self.apply_gapless_track_transition(&path, meta);
+                    }
+                }
+            }
+
+            // 残り3秒未満での次曲バックグラウンドプリロードトリガー
+            if current_engine_state == PlaybackState::Playing {
+                let cur = self.engine.current_position_secs();
+                let dur = self.engine.total_duration_secs();
+                if dur > 3.0 && (dur - cur) <= 3.0 {
+                    if let Some(next_item) = self.playlist.peek_next_track() {
+                        self.engine.preload_next(&next_item.path);
+                    }
+                }
+            }
+
+            // 再生中から終了状態への自然遷移時のみ、次の曲へ進む（プリロードなし停止時フォールバック）
             if self.last_engine_state == PlaybackState::Playing && current_engine_state == PlaybackState::Stopped {
                 self.play_next_track();
             }
