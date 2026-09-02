@@ -16,7 +16,8 @@ use super::{CdDiscInfo, CdReader, CdTrackInfo};
 const IOCTL_CDROM_READ_TOC: u32 = 0x00024000;
 const IOCTL_CDROM_RAW_READ: u32 = 0x0002403E;
 const CD_RAW_SECTOR_SIZE: usize = 2352;
-const SECTORS_PER_READ: u32 = 20; // 1回のIOCTLで20セクタ(約266ms分)をまとめてストリーミング読み出し
+const SECTORS_PER_READ: u32 = 8; // 1回のIOCTLで8セクタ(約106ms分)をまとめてストリーミング読み出し
+const TRACK_MODE_CDDA: u32 = 2; // TRACK_MODE_TYPE::CDDA = 2 (0=YellowMode2, 1=XAForm2)
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -261,7 +262,7 @@ impl CdReader for WindowsCdReader {
         let raw_info = RawReadInfo {
             disk_offset: (self.current_lba as i64) * 2048,
             sector_count: sectors_to_read,
-            track_mode: 0, // CDDA (raw 2352 bytes)
+            track_mode: TRACK_MODE_CDDA,
         };
 
         let buffer_size = (sectors_to_read as usize) * CD_RAW_SECTOR_SIZE;
@@ -281,8 +282,12 @@ impl CdReader for WindowsCdReader {
             )
         };
 
-        if success.is_err() {
-            return Err("Failed to read raw CDDA sectors from optical drive".into());
+        if let Err(e) = success {
+            let win_err = windows::core::Error::from_win32();
+            return Err(format!(
+                "Failed to read raw CDDA sectors from optical drive at LBA {} (count={}): {} (Win32 code: {})",
+                self.current_lba, sectors_to_read, e, win_err.code().0
+            ).into());
         }
 
         let actual_bytes = bytes_returned as usize;
@@ -317,3 +322,16 @@ pub fn is_cdrom_drive(drive_letter: char) -> bool {
     let drive_type = unsafe { GetDriveTypeW(PCWSTR(wide_root.as_ptr())) };
     drive_type == 5 // DRIVE_CDROM = 5
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_raw_read_info_layout() {
+        assert_eq!(std::mem::size_of::<RawReadInfo>(), 16);
+        assert_eq!(std::mem::align_of::<RawReadInfo>(), 8);
+        assert_eq!(TRACK_MODE_CDDA, 2);
+    }
+}
+
