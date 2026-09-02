@@ -476,8 +476,37 @@ impl App {
         terminal.clear()?;
 
         let mut frame_count: u64 = 0;
+        let target_frame_duration = Duration::from_millis(33); // 約30 FPS 上限制御
+        let mut last_frame_time = Instant::now();
 
         while !self.should_quit {
+            // 1. ノンブロッキングで到着済みイベントを一括ドレイン処理
+            while event::poll(Duration::from_millis(0))? {
+                match event::read()? {
+                    Event::Key(key) if key.kind == KeyEventKind::Press || key.kind == KeyEventKind::Repeat => {
+                        self.handle_key_event(key);
+                    }
+                    Event::Mouse(mouse) => {
+                        self.handle_mouse_event(mouse);
+                    }
+                    _ => {}
+                }
+            }
+
+            if self.should_quit {
+                break;
+            }
+
+            // 2. 次フレーム時刻までの残り時間をスリープ待機（イベント発生時は即座にウェイクアップ）
+            let elapsed = last_frame_time.elapsed();
+            if elapsed < target_frame_duration {
+                let remaining = target_frame_duration - elapsed;
+                if event::poll(remaining)? {
+                    continue; // イベント到着時は先頭に戻り即時処理
+                }
+            }
+
+            last_frame_time = Instant::now();
             let current_engine_state = self.engine.current_state();
 
             // 再生中から終了状態への自然遷移時のみ、次の曲へ進む
@@ -681,19 +710,6 @@ impl App {
                     ModalState::None => {}
                 }
             })?;
-
-            // 30ms イベントポーリング (~33 FPS)
-            if event::poll(Duration::from_millis(30))? {
-                match event::read()? {
-                    Event::Key(key) if key.kind == KeyEventKind::Press || key.kind == KeyEventKind::Repeat => {
-                        self.handle_key_event(key);
-                    }
-                    Event::Mouse(mouse) => {
-                        self.handle_mouse_event(mouse);
-                    }
-                    _ => {}
-                }
-            }
         }
 
         // 終了・端末復元
