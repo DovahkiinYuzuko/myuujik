@@ -90,11 +90,32 @@ impl AudioDecoder {
                     });
                 }
 
+                let mut title = format!("CD Track {:02}", track_num);
+                let mut artist = "Audio CD".to_string();
+                let mut album = format!("CD Drive ({}:)", disc_info.drive_letter);
+
+                if let Some(cd_meta) = cd::metadata::load_cached_cd_metadata(&disc_info.disc_id) {
+                    album = cd_meta.album_title.clone();
+                    if !cd_meta.artist.is_empty() {
+                        artist = cd_meta.artist.clone();
+                    }
+                    if let Some(t) = cd_meta.tracks.iter().find(|t| t.track_number == track_num) {
+                        if !t.title.is_empty() {
+                            title = t.title.clone();
+                        }
+                        if let Some(track_artist) = &t.artist {
+                            if !track_artist.is_empty() {
+                                artist = track_artist.clone();
+                            }
+                        }
+                    }
+                }
+
                 let metadata = TrackMetadata {
                     file_path: path_buf,
-                    title: Some(format!("CD Track {:02}", track_num)),
-                    artist: Some("Audio CD".to_string()),
-                    album: Some(format!("CD Drive ({}:)", disc_info.drive_letter)),
+                    title: Some(title),
+                    artist: Some(artist),
+                    album: Some(album),
                     duration_secs,
                     sample_rate: 44100,
                     channels: 2,

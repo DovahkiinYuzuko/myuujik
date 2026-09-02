@@ -152,8 +152,10 @@ impl App {
             let disc_id = decoder.disc_id().map(|s| s.to_string());
             let path_str = path.to_string_lossy().to_string();
 
-            if cover.is_none() {
-                if let Some(did) = disc_id {
+            if let Some(did) = disc_id {
+                let has_cover = cover.is_some();
+                let has_meta = crate::audio::cd::metadata::load_cached_cd_metadata(&did).is_some();
+                if !has_cover || !has_meta {
                     self.pending_cd_disc_id = Some((path_str.clone(), did));
                 } else {
                     self.pending_cd_disc_id = None;
@@ -168,9 +170,13 @@ impl App {
         self.engine.play_file(path);
     }
 
-    /// CD カバーアートの非同期ダウンロード完了を検知して UI に反映する
+    /// CD カバーアートおよびメタデータの非同期ダウンロード完了を検知して UI に反映する
     pub fn check_pending_cover_art(&mut self) {
         if let Some((track_key, disc_id)) = &self.pending_cd_disc_id {
+            let mut cover_resolved = false;
+            let mut meta_resolved = false;
+
+            // 1. カバーアートの反映
             if let Some(cache_path) = crate::audio::cd::metadata::get_cached_cover_art_path(disc_id) {
                 if cache_path.exists() {
                     if let Ok(data) = std::fs::read(&cache_path) {
@@ -180,10 +186,46 @@ impl App {
                                 data,
                             };
                             self.cover_widget.update_cover_art(track_key, Some(&cover));
-                            self.pending_cd_disc_id = None;
+                            cover_resolved = true;
                         }
                     }
                 }
+            }
+
+            // 2. メタデータ（タイトル、アーティスト、アルバム）の遅延反映
+            if let Some(cd_meta) = crate::audio::cd::metadata::load_cached_cd_metadata(disc_id) {
+                if let Some(meta) = self.current_metadata.as_mut() {
+                    if meta.codec_name == "CD-DA" {
+                        meta.album = Some(cd_meta.album_title.clone());
+                        if !cd_meta.artist.is_empty() {
+                            meta.artist = Some(cd_meta.artist.clone());
+                        }
+
+                        // パスからトラック番号を抽出（例: "Track10.cda" -> 10）
+                        let file_name = std::path::Path::new(track_key)
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("");
+                        let digits: String = file_name.chars().filter(|c| c.is_ascii_digit()).collect();
+                        if let Ok(track_num) = digits.parse::<u8>() {
+                            if let Some(t) = cd_meta.tracks.iter().find(|t| t.track_number == track_num) {
+                                if !t.title.is_empty() {
+                                    meta.title = Some(t.title.clone());
+                                }
+                                if let Some(track_artist) = &t.artist {
+                                    if !track_artist.is_empty() {
+                                        meta.artist = Some(track_artist.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                meta_resolved = true;
+            }
+
+            if cover_resolved && meta_resolved {
+                self.pending_cd_disc_id = None;
             }
         }
     }

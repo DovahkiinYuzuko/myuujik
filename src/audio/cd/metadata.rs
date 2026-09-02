@@ -208,6 +208,20 @@ pub fn get_cd_cache_dir() -> Option<PathBuf> {
     None
 }
 
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CdTrackMetadata {
+    pub track_number: u8,
+    pub title: String,
+    pub artist: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CdAlbumMetadata {
+    pub album_title: String,
+    pub artist: String,
+    pub tracks: Vec<CdTrackMetadata>,
+}
+
 /// DiscID からキャッシュ画像ファイルパスを取得する
 pub fn get_cached_cover_art_path(disc_id: &str) -> Option<PathBuf> {
     let sanitized_id: String = disc_id
@@ -219,24 +233,49 @@ pub fn get_cached_cover_art_path(disc_id: &str) -> Option<PathBuf> {
     Some(path)
 }
 
-/// MusicBrainz API および Cover Art Archive を経由してジャケット写真を同期取得・キャッシュ保存する
-pub fn fetch_cover_art_from_musicbrainz(disc_id: &str, toc_string: Option<&str>) -> Option<PathBuf> {
-    let cache_path = get_cached_cover_art_path(disc_id)?;
-    if cache_path.exists() {
-        if let Ok(meta) = std::fs::metadata(&cache_path) {
-            if meta.len() > 0 {
-                crate::logger::info("CdMetadata", &format!("Using cached album art for DiscID: {} ({:?})", disc_id, cache_path));
-                return Some(cache_path);
+/// DiscID からキャッシュメタデータ JSON ファイルパスを取得する
+pub fn get_cached_metadata_path(disc_id: &str) -> Option<PathBuf> {
+    let sanitized_id: String = disc_id
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
+        .collect();
+    let mut path = get_cd_cache_dir()?;
+    path.push(format!("{}.json", sanitized_id));
+    Some(path)
+}
+
+/// キャッシュ済みの CD アルバムメタデータを読み込む
+pub fn load_cached_cd_metadata(disc_id: &str) -> Option<CdAlbumMetadata> {
+    let path = get_cached_metadata_path(disc_id)?;
+    if path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(meta) = serde_json::from_str::<CdAlbumMetadata>(&content) {
+                return Some(meta);
             }
         }
     }
+    None
+}
 
-    crate::logger::info("CdMetadata", &format!("Starting cover art resolution for DiscID: {} (toc: {:?})", disc_id, toc_string));
+/// MusicBrainz API および Cover Art Archive を経由してジャケット写真およびメタデータを同期取得・キャッシュ保存する
+pub fn fetch_cover_art_from_musicbrainz(disc_id: &str, toc_string: Option<&str>) -> Option<PathBuf> {
+    let cache_path = get_cached_cover_art_path(disc_id)?;
+    let metadata_path = get_cached_metadata_path(disc_id);
 
-    // 1. MusicBrainz API に問い合わせて Release MBID を取得
+    let has_image = cache_path.exists() && std::fs::metadata(&cache_path).map(|m| m.len() > 0).unwrap_or(false);
+    let has_metadata = metadata_path.as_ref().map(|p| p.exists()).unwrap_or(false);
+
+    if has_image && has_metadata {
+        crate::logger::info("CdMetadata", &format!("Using cached album art and metadata for DiscID: {} ({:?})", disc_id, cache_path));
+        return Some(cache_path);
+    }
+
+    crate::logger::info("CdMetadata", &format!("Starting cover art & metadata resolution for DiscID: {} (toc: {:?})", disc_id, toc_string));
+
+    // 1. MusicBrainz API に問い合わせて Release MBID およびメタデータを取得
     let mb_url = match toc_string {
-        Some(toc) => format!("https://musicbrainz.org/ws/2/discid/{}?toc={}&fmt=json", disc_id, toc.replace(' ', "+")),
-        None => format!("https://musicbrainz.org/ws/2/discid/{}?fmt=json", disc_id),
+        Some(toc) => format!("https://musicbrainz.org/ws/2/discid/{}?toc={}&inc=recordings+artist-credits&fmt=json", disc_id, toc.replace(' ', "+")),
+        None => format!("https://musicbrainz.org/ws/2/discid/{}?inc=recordings+artist-credits&fmt=json", disc_id),
     };
     let user_agent = "myuujik/0.1.0 ( rikuichi0212@gmail.com )";
 
@@ -299,8 +338,67 @@ pub fn fetch_cover_art_from_musicbrainz(disc_id: &str, toc_string: Option<&str>)
             return None;
         }
     };
-    let release_title = release.get("title").and_then(|t| t.as_str()).unwrap_or("Unknown Title");
-    crate::logger::info("CdMetadata", &format!("Matched MusicBrainz Release: title='{}', mbid={}", release_title, mbid));
+    let release_title = release.get("title").and_then(|t| t.as_str()).unwrap_or("Unknown Album").to_string();
+    let release_artist = release.get("artist-credit")
+        .and_then(|ac| ac.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|item| item.get("name"))
+        .and_then(|n| n.as_str())
+        .unwrap_or("Audio CD")
+        .to_string();
+
+    crate::logger::info("CdMetadata", &format!("Matched MusicBrainz Release: title='{}', artist='{}', mbid={}", release_title, release_artist, mbid));
+
+    // 各トラック情報の抽出
+    let mut tracks_meta = Vec::new();
+    if let Some(media) = release.get("media").and_then(|m| m.as_array()) {
+        if let Some(first_media) = media.first() {
+            if let Some(track_list) = first_media.get("tracks").and_then(|t| t.as_array()) {
+                for (idx, t) in track_list.iter().enumerate() {
+                    let track_num = t.get("number")
+                        .and_then(|n| n.as_str())
+                        .and_then(|s| s.parse::<u8>().ok())
+                        .unwrap_or((idx + 1) as u8);
+                    let title = t.get("title")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let artist = t.get("artist-credit")
+                        .and_then(|ac| ac.as_array())
+                        .and_then(|arr| arr.first())
+                        .and_then(|item| item.get("name"))
+                        .and_then(|n| n.as_str())
+                        .map(|s| s.to_string());
+
+                    if !title.is_empty() {
+                        tracks_meta.push(CdTrackMetadata {
+                            track_number: track_num,
+                            title,
+                            artist,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    let album_meta = CdAlbumMetadata {
+        album_title: release_title,
+        artist: release_artist,
+        tracks: tracks_meta,
+    };
+
+    if let Some(json_path) = metadata_path {
+        if let Ok(json_str) = serde_json::to_string_pretty(&album_meta) {
+            let _ = std::fs::write(&json_path, json_str);
+            crate::logger::info("CdMetadata", &format!("Saved CD album metadata to: {:?}", json_path));
+        }
+    }
+
+    // 既に画像がある場合はダウンロードをスキップ
+    if has_image {
+        return Some(cache_path);
+    }
 
     // 2. Cover Art Archive からフロントカバー画像を取得
     let caa_url = format!("https://coverartarchive.org/release/{}/front-250", mbid);
@@ -496,5 +594,29 @@ mod tests {
         assert!(path.is_some());
         let p = path.unwrap();
         assert!(p.to_string_lossy().ends_with("test-disc_id.123.jpg"));
+    }
+
+    #[test]
+    fn test_cd_album_metadata_serialization() {
+        let meta = CdAlbumMetadata {
+            album_title: "PARADE".to_string(),
+            artist: "Test Artist".to_string(),
+            tracks: vec![
+                CdTrackMetadata {
+                    track_number: 1,
+                    title: "Opening".to_string(),
+                    artist: None,
+                },
+                CdTrackMetadata {
+                    track_number: 2,
+                    title: "Main Theme".to_string(),
+                    artist: Some("Guest Artist".to_string()),
+                },
+            ],
+        };
+
+        let json = serde_json::to_string(&meta).unwrap();
+        let deserialized: CdAlbumMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(meta, deserialized);
     }
 }
