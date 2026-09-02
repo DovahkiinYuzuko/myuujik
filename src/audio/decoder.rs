@@ -197,6 +197,11 @@ impl AudioDecoder {
             }
         }
 
+        // 動画ファイルかつ埋め込みカバーアートが存在しない場合、OS ネイティブのサムネイルを自動抽出
+        if cover_art.is_none() && crate::audio::thumbnail::is_video_file(&path_buf) {
+            cover_art = crate::audio::thumbnail::extract_video_thumbnail(&path_buf);
+        }
+
         let metadata = TrackMetadata {
             file_path: path_buf,
             title,

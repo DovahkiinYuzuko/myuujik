@@ -7,6 +7,7 @@ pub mod ring_buffer;
 pub mod shared;
 pub mod traits;
 pub mod visualizer;
+pub mod thumbnail;
 
 pub use decoder::{AudioDecoder, CoverArt, TrackMetadata};
 pub use engine::{AudioEngine, EngineCommand};
