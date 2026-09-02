@@ -11,6 +11,9 @@ use ratatui::widgets::{Paragraph, Widget};
 pub struct LyricsView<'a> {
     pub lyrics: Option<&'a Lyrics>,
     pub elapsed_ms: u64,
+    pub is_fetching: bool,
+    pub fetch_message: Option<&'a str>,
+    pub is_fetch_error: bool,
     pub i18n: &'a I18n,
     pub theme: &'a Theme,
 }
@@ -22,12 +25,30 @@ impl<'a> Widget for LyricsView<'a> {
         }
 
         let Some(lyrics) = self.lyrics else {
-            let empty_text = self.i18n.t("lyrics.not_found");
-            let p = Paragraph::new(Line::from(Span::styled(
-                empty_text,
-                Style::default().fg(self.theme.text_secondary),
-            )))
-            .alignment(Alignment::Center);
+            let (msg, style) = if self.is_fetching {
+                (
+                    format!("✦ {}", self.i18n.t("lyrics.fetching")),
+                    Style::default().fg(Color::Rgb(56, 189, 248)).add_modifier(Modifier::BOLD),
+                )
+            } else if let Some(err_msg) = self.fetch_message {
+                let color = if self.is_fetch_error {
+                    Color::Rgb(239, 68, 68)
+                } else {
+                    Color::Rgb(56, 189, 248)
+                };
+                (
+                    format!("✦ {}", err_msg),
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                )
+            } else {
+                (
+                    self.i18n.t("lyrics.not_found").to_string(),
+                    Style::default().fg(self.theme.text_secondary),
+                )
+            };
+
+            let p = Paragraph::new(Line::from(Span::styled(msg, style)))
+                .alignment(Alignment::Center);
             let y = area.y + area.height / 2;
             p.render(
                 Rect {
@@ -78,7 +99,8 @@ impl<'a> Widget for LyricsView<'a> {
             let (style, prefix) = if is_current {
                 (
                     Style::default()
-                        .fg(Color::Rgb(56, 189, 248)) // 明るいシアン（ハイライト）
+                        .fg(Color::White)
+                        .bg(Color::Rgb(14, 116, 144)) // ディープシアン背景帯
                         .add_modifier(Modifier::BOLD),
                     "▶ ",
                 )
@@ -94,6 +116,7 @@ impl<'a> Widget for LyricsView<'a> {
 
             let content = format!("  {}{}", prefix, line.text);
             let p = Paragraph::new(Line::from(Span::styled(content, style)))
+                .style(style)
                 .alignment(Alignment::Left);
 
             p.render(

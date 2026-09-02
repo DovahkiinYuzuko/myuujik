@@ -9,6 +9,8 @@ pub mod traits;
 pub mod visualizer;
 pub mod thumbnail;
 pub mod lyrics;
+pub mod fingerprint;
+pub mod lyrics_fetcher;
 
 pub use decoder::{AudioDecoder, CoverArt, TrackMetadata};
 pub use engine::{AudioEngine, EngineCommand};

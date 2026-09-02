@@ -96,6 +96,10 @@
     "open": "Open Folder",
     "search": "Search",
     "lyrics": "Lyrics/Wave",
+    "visualizer": "Toggle Visualizer",
+    "fetch_lyrics": "Auto-fetch Lyrics",
+    "delete_lyrics": "Delete Lyrics File",
+    "parent_dir": "Go to Parent Folder",
     "help": "Help",
     "quit": "Quit"
   },
@@ -113,12 +117,17 @@
     "shuffle": "s: Shuffle",
     "mode": "e: Output Mode",
     "lyrics": "l: Toggle Lyrics/Waveform",
+    "fetch_lyrics": "d: Fetch / D: Delete Lyrics",
     "quit": "q / Esc: Quit"
   },
   "lyrics": {
-    "title": "Synchronized Lyrics",
-    "not_found": "No lyrics file (.lrc) found",
-    "loading": "Loading lyrics..."
+    "title": "Lyrics",
+    "not_found": "No lyrics file (.lrc) found (Press 'd' to auto-fetch)",
+    "loading": "Loading lyrics...",
+    "fetching": "Auto-fetching lyrics via acoustic fingerprint...",
+    "fetch_success": "Lyrics fetched and saved: {track}",
+    "fetch_failed": "Failed to fetch lyrics: {error}",
+    "deleted": "Lyrics file deleted"
   },
   "errors": {
     "exclusive_failed": "Failed to initialize Exclusive mode. Falling back to Shared mode.",

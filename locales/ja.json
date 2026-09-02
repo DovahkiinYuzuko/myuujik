@@ -96,6 +96,10 @@
     "open": "フォルダを開く",
     "search": "検索",
     "lyrics": "歌詞/波形",
+    "visualizer": "ビジュアライザ切替",
+    "fetch_lyrics": "歌詞自動取得",
+    "delete_lyrics": "歌詞ファイル削除",
+    "parent_dir": "親フォルダに戻る",
     "help": "ヘルプ表示",
     "quit": "終了"
   },
@@ -113,12 +117,17 @@
     "shuffle": "s: シャッフル切替",
     "mode": "e: 出力モード切替",
     "lyrics": "l: 歌詞/波形切替",
+    "fetch_lyrics": "d: 歌詞取得 / D: 歌詞削除",
     "quit": "q / Esc: 終了"
   },
   "lyrics": {
     "title": "歌詞",
-    "not_found": "歌詞ファイル (.lrc) が見つかりません",
-    "loading": "歌詞を読み込み中..."
+    "not_found": "歌詞ファイル (.lrc) が見つかりません (dキーで自動取得)",
+    "loading": "歌詞を読み込み中...",
+    "fetching": "音響指紋から歌詞を自動取得中...",
+    "fetch_success": "歌詞を取得・保存しました: {track}",
+    "fetch_failed": "歌詞の取得に失敗しました: {error}",
+    "deleted": "歌詞ファイルを削除しました"
   },
   "errors": {
     "exclusive_failed": "排他モードの初期化に失敗しました。Sharedモードで再生します。",

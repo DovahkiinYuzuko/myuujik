@@ -58,6 +58,8 @@ pub struct App {
     pub search_query: String,
     pub current_lyrics: Option<crate::audio::lyrics::Lyrics>,
     pub show_lyrics: bool,
+    pub lyrics_fetch_rx: Option<Receiver<Result<(PathBuf, String), String>>>,
+    pub lyrics_toast: Option<(String, Instant, bool)>,
 }
 
 impl App {
@@ -125,6 +127,8 @@ impl App {
             search_query: String::new(),
             current_lyrics: None,
             show_lyrics: false,
+            lyrics_fetch_rx: None,
+            lyrics_toast: None,
         };
 
         let target_track = if let Some(ref saved_path_str) = config.session.last_track_path {
@@ -266,6 +270,104 @@ impl App {
                 self.pending_cd_disc_id = None;
             }
         }
+    }
+
+    /// 音響指紋を用いた歌詞自動取得をバックグラウンドスレッドで起動する
+    pub fn start_lyrics_auto_fetch(&mut self) {
+        if self.lyrics_fetch_rx.is_some() {
+            return;
+        }
+
+        // 1. 再生中トラックがあればそれを対象に、なければプレイリストで選択中のトラックを対象にする
+        let track_path = self.playlist.current_track()
+            .map(|t| t.path.clone())
+            .or_else(|| self.playlist.selected_item().map(|t| t.path.clone()));
+
+        let track_path = if let Some(p) = track_path {
+            p
+        } else {
+            return;
+        };
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.lyrics_fetch_rx = Some(rx);
+        self.show_lyrics = true; // 歌詞表示ビューへ自動切り替え
+        self.lyrics_toast = Some((
+            self.i18n.t("lyrics.fetching").to_string(),
+            Instant::now(),
+            false,
+        ));
+
+        std::thread::spawn(move || {
+            let res = crate::audio::lyrics_fetcher::auto_fetch_and_save_lyrics(&track_path);
+            let _ = tx.send(res);
+        });
+    }
+
+    /// バックグラウンド歌詞自動取得の完了を検知して UI に反映する
+    pub fn check_lyrics_fetch_result(&mut self) {
+        if let Some(ref rx) = self.lyrics_fetch_rx {
+            if let Ok(res) = rx.try_recv() {
+                self.lyrics_fetch_rx = None;
+                match res {
+                    Ok((lrc_path, track_title)) => {
+                        let msg = self.i18n.t_args("lyrics.fetch_success", &[("track", &track_title)]);
+                        self.lyrics_toast = Some((msg, Instant::now(), false));
+                        self.show_lyrics = true;
+
+                        // 現在再生中のトラックまたは選択中のトラックの歌詞であれば即座に読み込む
+                        let current_path = self.playlist.current_track()
+                            .map(|t| t.path.clone())
+                            .or_else(|| self.playlist.selected_item().map(|t| t.path.clone()));
+
+                        if let Some(target_p) = current_path {
+                            if target_p.with_extension("lrc") == lrc_path {
+                                if let Some(lyrics) = crate::audio::lyrics::load_for_track(&target_p) {
+                                    self.current_lyrics = Some(lyrics);
+                                }
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        let msg = self.i18n.t_args("lyrics.fetch_failed", &[("error", &err)]);
+                        self.lyrics_toast = Some((msg, Instant::now(), true));
+                    }
+                }
+            }
+        }
+
+        // トースト通知の自動消去（6秒経過で消去）
+        if let Some((_, start, _)) = self.lyrics_toast {
+            if start.elapsed().as_secs() >= 6 {
+                self.lyrics_toast = None;
+            }
+        }
+    }
+
+    /// 現在再生中（または選択中）のトラックの歌詞ファイル（.lrc）を削除し、表示をクリアする
+    pub fn delete_current_lyrics(&mut self) {
+        let track_path = self.playlist.current_track()
+            .map(|t| t.path.clone())
+            .or_else(|| self.playlist.selected_item().map(|t| t.path.clone()));
+
+        let track_path = if let Some(p) = track_path {
+            p
+        } else {
+            return;
+        };
+
+        let lrc_path = track_path.with_extension("lrc");
+        if lrc_path.exists() {
+            if let Err(e) = std::fs::remove_file(&lrc_path) {
+                let msg = format!("削除失敗: {e}");
+                self.lyrics_toast = Some((msg, Instant::now(), true));
+                return;
+            }
+        }
+
+        self.current_lyrics = None;
+        let msg = self.i18n.t("lyrics.deleted").to_string();
+        self.lyrics_toast = Some((msg, Instant::now(), false));
     }
 
     /// OS標準のフォルダ選択ダイアログをバックグラウンドスレッドで起動する
@@ -525,10 +627,16 @@ impl App {
                 self.engine.set_output_mode(target_mode);
                 self.is_exclusive = target_mode == "Exclusive";
             }
-            KeyCode::Char('d') => {
+            KeyCode::Char('E') => {
                 self.available_devices = SharedBackend::list_devices();
                 self.device_modal_idx = 0;
                 self.hfsm.open_modal(ModalState::DeviceSelect { selected_index: 0 });
+            }
+            KeyCode::Char('d') => {
+                self.start_lyrics_auto_fetch();
+            }
+            KeyCode::Char('D') => {
+                self.delete_current_lyrics();
             }
             KeyCode::Char('?') | KeyCode::Char('h') => {
                 self.hfsm.open_modal(ModalState::Help);
@@ -744,6 +852,7 @@ impl App {
                 self.check_pending_cover_art();
             }
             self.check_folder_picker_result();
+            self.check_lyrics_fetch_result();
             if let Ok(term_size) = terminal.size() {
                 let right_width = (term_size.width as f32 * 0.62).round() as usize;
                 let target_len = right_width.saturating_sub(4).clamp(16, 128);
@@ -899,6 +1008,8 @@ impl App {
                     waveform_points: &self.waveform_points,
                     lyrics: self.current_lyrics.as_ref(),
                     show_lyrics: self.show_lyrics,
+                    is_fetching_lyrics: self.lyrics_fetch_rx.is_some(),
+                    lyrics_toast: self.lyrics_toast.as_ref(),
                     i18n: &self.i18n,
                     theme: &self.theme,
                 };

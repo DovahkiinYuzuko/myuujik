@@ -23,6 +23,8 @@ pub struct ControlsView<'a> {
     pub waveform_points: &'a [f32],
     pub lyrics: Option<&'a Lyrics>,
     pub show_lyrics: bool,
+    pub is_fetching_lyrics: bool,
+    pub lyrics_toast: Option<&'a (String, std::time::Instant, bool)>,
     pub i18n: &'a I18n,
     pub theme: &'a Theme,
 }
@@ -124,7 +126,7 @@ impl<'a> Widget for ControlsView<'a> {
             self.visualizer_mode.display_name().to_string()
         };
 
-        let status_spans = vec![
+        let mut status_spans = vec![
             Span::styled(
                 format!(" {} ", status_badge),
                 Style::default()
@@ -168,6 +170,19 @@ impl<'a> Widget for ControlsView<'a> {
             ),
         ];
 
+        if let Some((ref msg, _, is_err)) = self.lyrics_toast {
+            let color = if *is_err {
+                Color::Rgb(239, 68, 68)
+            } else {
+                Color::Rgb(56, 189, 248)
+            };
+            status_spans.push(Span::raw("  "));
+            status_spans.push(Span::styled(
+                format!(" ✦ {} ", msg),
+                Style::default().fg(color).bg(Color::Rgb(25, 30, 45)).add_modifier(Modifier::BOLD),
+            ));
+        }
+
         let status_para = Paragraph::new(Line::from(status_spans)).style(Style::default().bg(self.theme.bg_card));
         status_para.render(chunks[1], buf);
 
@@ -175,9 +190,14 @@ impl<'a> Widget for ControlsView<'a> {
         if chunks[2].height > 0 && chunks[2].width > 0 {
             if self.show_lyrics {
                 let elapsed_ms = (self.current_position_secs * 1000.0).max(0.0) as u64;
+                let fetch_message = self.lyrics_toast.as_ref().map(|(msg, _, _)| msg.as_str());
+                let is_fetch_error = self.lyrics_toast.as_ref().map(|(_, _, is_err)| *is_err).unwrap_or(false);
                 let lyrics_view = LyricsView {
                     lyrics: self.lyrics,
                     elapsed_ms,
+                    is_fetching: self.is_fetching_lyrics,
+                    fetch_message,
+                    is_fetch_error,
                     i18n: self.i18n,
                     theme: self.theme,
                 };

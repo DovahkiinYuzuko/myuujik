@@ -33,6 +33,11 @@ impl Lyrics {
             Some(partition - 1)
         }
     }
+
+    /// 歌詞の最終行のタイムスタンプ（ミリ秒）を返す。歌詞が空の場合は0を返す。
+    pub fn last_timestamp_ms(&self) -> u64 {
+        self.lines.last().map(|l| l.timestamp_ms).unwrap_or(0)
+    }
 }
 
 /// LRC形式の文字列をパースする
