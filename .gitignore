@@ -1,0 +1,28 @@
+# project:myuujik
+*
+!.gitignore
+# ---AUTO-Generated---
+# .gitignores/locales.gitignore
+!locales/
+!locales/*.json
+# .gitignores/root.gitignore
+!README.md
+!NOTICE.md
+!LICENSE.*
+
+!Cargo.toml
+# .gitignores/src.gitignore
+!src/
+!src/*.rs
+!src/audio/
+!src/audio/**
+!src/fsm/
+!src/fsm/**
+!src/playlist/
+!src/playlist/**
+!src/ui/
+!src/ui/*.rs
+!src/ui/views/
+!src/ui/views/**
+!src/platform/
+!src/platform/**
