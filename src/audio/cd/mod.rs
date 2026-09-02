@@ -42,6 +42,36 @@ pub trait CdReader: Send + Sync {
     fn read_next_packet(&mut self) -> Result<Option<Vec<f32>>, Box<dyn Error + Send + Sync>>;
 }
 
+/// パスからドライブ文字（'A'..='Z'）を安全に抽出する（\\?\D:\ や \\.\D: 等のプレフィックスに対応）
+pub fn extract_drive_letter<P: AsRef<Path>>(path: P) -> Option<char> {
+    use std::path::{Component, Prefix};
+
+    for comp in path.as_ref().components() {
+        if let Component::Prefix(prefix) = comp {
+            match prefix.kind() {
+                Prefix::Disk(c) | Prefix::VerbatimDisk(c) => {
+                    return Some((c as char).to_ascii_uppercase());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // フォールバック（文字列スキャン: 例 "D:" や "\\.\D:"）
+    let s = path.as_ref().to_string_lossy();
+    for (idx, ch) in s.char_indices() {
+        if ch == ':' && idx > 0 {
+            if let Some(prev) = s[..idx].chars().last() {
+                if prev.is_ascii_alphabetic() {
+                    return Some(prev.to_ascii_uppercase());
+                }
+            }
+        }
+    }
+
+    None
+}
+
 /// 指定されたパスがCDドライブまたはCDAトラックであるかを判定する
 pub fn is_cd_path<P: AsRef<Path>>(path: P) -> bool {
     let p = path.as_ref();
@@ -53,19 +83,28 @@ pub fn is_cd_path<P: AsRef<Path>>(path: P) -> bool {
 
     #[cfg(windows)]
     {
-        if let Some(s) = p.to_str() {
-            let trimmed = s.trim();
-            // 例: "D:", "D:\", "\\.\D:"
-            if trimmed.len() >= 2 && trimmed.chars().nth(1) == Some(':') {
-                let drive_char = trimmed.chars().next().unwrap().to_ascii_uppercase();
-                if ('A'..='Z').contains(&drive_char) {
-                    if trimmed.len() <= 3 {
-                        return windows::is_cdrom_drive(drive_char);
-                    }
-                }
+        if let Some(drive_char) = extract_drive_letter(p) {
+            let s = p.to_string_lossy();
+            let stripped = s.trim_start_matches(r"\\?\").trim();
+            if stripped.len() <= 3 {
+                return windows::is_cdrom_drive(drive_char);
             }
         }
     }
 
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_drive_letter() {
+        assert_eq!(extract_drive_letter(r"D:\"), Some('D'));
+        assert_eq!(extract_drive_letter(r"\\?\D:\Track01.cda"), Some('D'));
+        assert_eq!(extract_drive_letter(r"\\.\E:"), Some('E'));
+        assert_eq!(extract_drive_letter("f:/songs/track.cda"), Some('F'));
+        assert_eq!(extract_drive_letter("relative/path/song.mp3"), None);
+    }
 }

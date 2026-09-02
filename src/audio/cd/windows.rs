@@ -61,12 +61,8 @@ unsafe impl Sync for WindowsCdReader {}
 impl WindowsCdReader {
     /// 指定されたパス（例: "D:", "D:\\", "D:\\Track01.cda"）から CD ドライブリーダーを開く
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        let path_str = path.as_ref().to_string_lossy();
-        let drive_char = path_str
-            .chars()
-            .next()
-            .ok_or("Invalid path for CD drive")?
-            .to_ascii_uppercase();
+        let drive_char = super::extract_drive_letter(path.as_ref())
+            .ok_or("Invalid path: could not determine drive letter for CD drive")?;
 
         if !is_cdrom_drive(drive_char) {
             return Err(format!("Drive {}: is not a CD-ROM / DVD optical drive", drive_char).into());
