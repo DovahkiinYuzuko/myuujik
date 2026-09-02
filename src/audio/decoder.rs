@@ -83,7 +83,8 @@ impl AudioDecoder {
                 let duration_secs = track_info.map(|t| t.duration_secs);
 
                 let mut cover_art = None;
-                if let Some((mime, data)) = cd::metadata::find_cd_album_art(disc_info.drive_letter, Some(&disc_info.disc_id), Some(&disc_info.toc_string)) {
+                let drive_root = format!("{}:\\", disc_info.drive_letter);
+                if let Some((mime, data)) = cd::metadata::find_cd_album_art(&drive_root, Some(&disc_info.disc_id), Some(&disc_info.toc_string)) {
                     cover_art = Some(CoverArt {
                         mime_type: mime,
                         data,

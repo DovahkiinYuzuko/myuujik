@@ -470,7 +470,7 @@ pub fn trigger_cd_cover_art_fetch(disc_id: &str, toc_string: Option<&str>) {
 }
 
 /// CD ドライブ内または周辺キャッシュ、オンラインからのアルバムアート画像探索
-pub fn find_cd_album_art(drive_letter: char, disc_id: Option<&str>, toc_string: Option<&str>) -> Option<(String, Vec<u8>)> {
+pub fn find_cd_album_art<P: AsRef<Path>>(root_path: P, disc_id: Option<&str>, toc_string: Option<&str>) -> Option<(String, Vec<u8>)> {
     // 0. ローカルキャッシュに存在するか確認（画像またはメタデータが未取得ならバックグラウンド取得を発火）
     if let Some(did) = disc_id {
         let has_metadata = get_cached_metadata_path(did)
@@ -499,10 +499,9 @@ pub fn find_cd_album_art(drive_letter: char, disc_id: Option<&str>, toc_string: 
         }
     }
 
-    let drive_root = format!("{}:\\", drive_letter);
-    let root_path = Path::new(&drive_root);
+    let root_path = root_path.as_ref();
 
-    // 1. ドライブ直下の画像（隠し属性含む）
+    // 1. ドライブ直下またはマウントポイント直下の画像（隠し属性含む）
     let candidate_names = [
         "Folder.jpg", "folder.jpg", "cover.jpg", "Cover.jpg",
         "AlbumArtSmall.jpg", "AlbumArt_{*.jpg", "front.jpg", "front.png",
@@ -631,5 +630,23 @@ mod tests {
         let json = serde_json::to_string(&meta).unwrap();
         let deserialized: CdAlbumMetadata = serde_json::from_str(&json).unwrap();
         assert_eq!(meta, deserialized);
+    }
+
+    #[test]
+    fn test_find_cd_album_art_with_path() {
+        let temp_dir = std::env::temp_dir().join("myuujik_test_cd_art");
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let folder_jpg = temp_dir.join("Folder.jpg");
+        let fake_data = vec![0xFF, 0xD8, 0xFF, 0xE0]; // JPEG magic bytes
+        let _ = std::fs::write(&folder_jpg, &fake_data);
+
+        let res = find_cd_album_art(&temp_dir, None, None);
+        assert!(res.is_some());
+        let (mime, data) = res.unwrap();
+        assert_eq!(mime, "image/jpeg");
+        assert_eq!(data, fake_data);
+
+        let _ = std::fs::remove_file(&folder_jpg);
+        let _ = std::fs::remove_dir(&temp_dir);
     }
 }
