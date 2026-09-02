@@ -182,6 +182,8 @@ impl AudioEngine {
         let mut decoder: Option<AudioDecoder> = None;
         let mut backend: Option<Box<dyn AudioOutputBackend>> = None;
         let mut producer: Option<rtrb::Producer<f32>> = None;
+        let mut pending_samples: Vec<f32> = Vec::new();
+        let mut pending_offset: usize = 0;
 
         const RING_BUFFER_SIZE: usize = 96_000; // 約1秒分 (48kHz Stereo)
 
@@ -208,6 +210,8 @@ impl AudioEngine {
                         // 旧バックエンドの排他ロック（WASAPI Exclusive等）およびリングバッファを先行解放
                         backend = None;
                         producer = None;
+                        pending_samples.clear();
+                        pending_offset = 0;
                         decoder = None;
 
                         match AudioDecoder::open(&path) {
@@ -307,6 +311,8 @@ impl AudioEngine {
                         backend = None;
                         producer = None;
                         decoder = None;
+                        pending_samples.clear();
+                        pending_offset = 0;
                     }
                     EngineCommand::Seek(target_secs) => {
                         logger::info("AudioEngine", &format!("Seek to {:.2}s", target_secs));
@@ -319,6 +325,8 @@ impl AudioEngine {
                                         let sample_pos = (actual * rate as f64) as u64;
                                         shared_state.current_sample_position.store(sample_pos, Ordering::Relaxed);
                                         shared_state.seek_trigger.store(true, Ordering::Release);
+                                        pending_samples.clear();
+                                        pending_offset = 0;
                                         shared_state.is_playing.store(true, Ordering::Relaxed);
                                         fsm.write().unwrap().transition(PlaybackEvent::BufferReady);
                                     }
@@ -434,35 +442,76 @@ impl AudioEngine {
                 break;
             }
 
-            // デコードループ：リングバッファが空いていればデコードして充填
+            // デコードループ：残余サンプルのフラッシュと新規パケットのデコード（業界標準 Backpressure アーキテクチャ）
             if let (Some(dec), Some(prod)) = (decoder.as_mut(), producer.as_mut()) {
                 let is_playing = shared_state.is_playing.load(Ordering::Relaxed);
                 if is_playing {
-                    let mut packets_decoded = 0;
-                    while prod.slots() >= 4096 && packets_decoded < 4 {
-                        packets_decoded += 1;
-                        match dec.next_interleaved_packet() {
-                            Ok(Some(samples)) => {
-                                for s in samples {
-                                    if prod.push(s).is_err() {
-                                        break;
+                    let mut iterations = 0;
+                    // リングバッファに空きがある限り、残余サンプルを注入し、必要に応じて次パケットをデコード
+                    while prod.slots() > 0 && iterations < 16 {
+                        iterations += 1;
+
+                        // 1. 前回入り切らなかった残余サンプル（pending_samples）があれば、最優先で push
+                        if pending_offset < pending_samples.len() {
+                            let available_slots = prod.slots();
+                            let remaining = pending_samples.len() - pending_offset;
+                            let to_push = available_slots.min(remaining);
+
+                            for &s in &pending_samples[pending_offset..pending_offset + to_push] {
+                                let _ = prod.push(s);
+                            }
+                            pending_offset += to_push;
+
+                            if pending_offset < pending_samples.len() {
+                                // リングバッファが満杯になったため、残りは次回ループに持ち越し
+                                break;
+                            } else {
+                                // 残余サンプルを全て push 完了
+                                pending_samples.clear();
+                                pending_offset = 0;
+                            }
+                        }
+
+                        // 2. 残余サンプルが空になり、かつリングバッファにまだ空きがあれば、次のパケットを取得
+                        if prod.slots() > 0 {
+                            match dec.next_interleaved_packet() {
+                                Ok(Some(samples)) => {
+                                    if samples.is_empty() {
+                                        continue;
+                                    }
+                                    let available_slots = prod.slots();
+                                    let to_push = available_slots.min(samples.len());
+
+                                    for &s in &samples[..to_push] {
+                                        let _ = prod.push(s);
+                                    }
+
+                                    // 入り切らなかった残りは pending_samples に退避（1サンプルもドロップさせない）
+                                    if to_push < samples.len() {
+                                        pending_samples = samples;
+                                        pending_offset = to_push;
+                                        break; // バッファ満杯のためバックプレッシャー
                                     }
                                 }
-                            }
-                            Ok(None) => {
-                                // トラック終了
-                                logger::info("AudioEngine", "Track finished naturally.");
-                                fsm.write().unwrap().transition(PlaybackEvent::TrackFinished);
-                                shared_state.is_playing.store(false, Ordering::Relaxed);
-                                backend = None;
-                                producer = None;
-                                decoder = None;
-                                break;
-                            }
-                            Err(e) => {
-                                logger::error("AudioEngine", &format!("Decoding packet error: {}", e));
-                                fsm.write().unwrap().transition(PlaybackEvent::DeviceError(e.to_string()));
-                                break;
+                                Ok(None) => {
+                                    // トラック終了（残余サンプルも全てリングバッファに push 済み）
+                                    logger::info("AudioEngine", "Track finished naturally.");
+                                    fsm.write().unwrap().transition(PlaybackEvent::TrackFinished);
+                                    shared_state.is_playing.store(false, Ordering::Relaxed);
+                                    backend = None;
+                                    producer = None;
+                                    decoder = None;
+                                    pending_samples.clear();
+                                    pending_offset = 0;
+                                    break;
+                                }
+                                Err(e) => {
+                                    logger::error("AudioEngine", &format!("Decoding packet error: {}", e));
+                                    fsm.write().unwrap().transition(PlaybackEvent::DeviceError(e.to_string()));
+                                    pending_samples.clear();
+                                    pending_offset = 0;
+                                    break;
+                                }
                             }
                         }
                     }
