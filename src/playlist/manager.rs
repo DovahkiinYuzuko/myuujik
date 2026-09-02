@@ -316,12 +316,16 @@ impl PlaylistManager {
                 self.shuffle_pos += 1;
                 let next_idx = self.shuffle_indices[self.shuffle_pos];
                 let path = self.all_tracks[next_idx].path.clone();
-                return self.select_and_play_path(&path);
+                self.current_playing_path = Some(path.clone());
+                self.sync_current_index_with_items();
+                return self.all_tracks.iter().find(|t| t.path == path);
             } else if self.repeat_mode == RepeatMode::All {
                 self.reshuffle();
                 let next_idx = self.shuffle_indices[0];
                 let path = self.all_tracks[next_idx].path.clone();
-                return self.select_and_play_path(&path);
+                self.current_playing_path = Some(path.clone());
+                self.sync_current_index_with_items();
+                return self.all_tracks.iter().find(|t| t.path == path);
             } else {
                 self.current_playing_path = None;
                 self.current_playing_index = None;
@@ -351,7 +355,9 @@ impl PlaylistManager {
         };
 
         let path = self.all_tracks[next_idx].path.clone();
-        self.select_and_play_path(&path)
+        self.current_playing_path = Some(path.clone());
+        self.sync_current_index_with_items();
+        self.all_tracks.iter().find(|t| t.path == path)
     }
 
     pub fn prev_track(&mut self) -> Option<&PlaylistItem> {
@@ -364,12 +370,16 @@ impl PlaylistManager {
                 self.shuffle_pos -= 1;
                 let prev_idx = self.shuffle_indices[self.shuffle_pos];
                 let path = self.all_tracks[prev_idx].path.clone();
-                return self.select_and_play_path(&path);
+                self.current_playing_path = Some(path.clone());
+                self.sync_current_index_with_items();
+                return self.all_tracks.iter().find(|t| t.path == path);
             } else if self.repeat_mode == RepeatMode::All {
                 self.shuffle_pos = self.shuffle_indices.len() - 1;
                 let prev_idx = self.shuffle_indices[self.shuffle_pos];
                 let path = self.all_tracks[prev_idx].path.clone();
-                return self.select_and_play_path(&path);
+                self.current_playing_path = Some(path.clone());
+                self.sync_current_index_with_items();
+                return self.all_tracks.iter().find(|t| t.path == path);
             } else {
                 return self.current_track();
             }
@@ -394,7 +404,9 @@ impl PlaylistManager {
         };
 
         let path = self.all_tracks[prev_idx].path.clone();
-        self.select_and_play_path(&path)
+        self.current_playing_path = Some(path.clone());
+        self.sync_current_index_with_items();
+        self.all_tracks.iter().find(|t| t.path == path)
     }
 
     pub fn toggle_repeat(&mut self) -> RepeatMode {

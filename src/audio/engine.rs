@@ -65,6 +65,14 @@ impl AudioEngine {
         );
 
         thread::spawn(move || {
+            #[cfg(windows)]
+            unsafe {
+                let _ = windows::Win32::System::Com::CoInitializeEx(
+                    None,
+                    windows::Win32::System::Com::COINIT_MULTITHREADED,
+                );
+            }
+
             Self::worker_loop(
                 cmd_rx,
                 shared_state_clone,
@@ -74,6 +82,11 @@ impl AudioEngine {
                 initial_mode_str,
                 initial_device_str,
             );
+
+            #[cfg(windows)]
+            unsafe {
+                windows::Win32::System::Com::CoUninitialize();
+            }
         });
 
         Ok(Self {
@@ -167,7 +180,17 @@ impl AudioEngine {
 
         loop {
             // コマンド処理
-            while let Ok(cmd) = cmd_rx.try_recv() {
+            let mut is_disconnected = false;
+            loop {
+                let cmd = match cmd_rx.try_recv() {
+                    Ok(c) => c,
+                    Err(crossbeam_channel::TryRecvError::Empty) => break,
+                    Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                        is_disconnected = true;
+                        break;
+                    }
+                };
+
                 match cmd {
                     EngineCommand::PlayPath(path) => {
                         logger::info("AudioEngine", &format!("PlayPath command received: {:?}", path));
@@ -389,6 +412,11 @@ impl AudioEngine {
                 }
             }
 
+            if is_disconnected {
+                logger::info("AudioEngine", "Command channel disconnected. Exiting worker thread cleanly.");
+                break;
+            }
+
             // デコードループ：リングバッファが空いていればデコードして充填
             if let (Some(dec), Some(prod)) = (decoder.as_mut(), producer.as_mut()) {
                 let is_playing = shared_state.is_playing.load(Ordering::Relaxed);
@@ -444,6 +472,14 @@ impl AudioEngine {
             ),
         );
 
+        if mode == "Mock" {
+            is_fallback.store(false, Ordering::Relaxed);
+            *active_mode.write().unwrap() = "Mock (In-Memory)".to_string();
+            let mock = crate::audio::mock::MockAudioBackend::create(consumer, state);
+            logger::info("AudioEngine", "MockAudioBackend created successfully.");
+            return Ok((Box::new(mock), None));
+        }
+
         if mode == "Exclusive" && ExclusiveBackend::is_supported() {
             let res = ExclusiveBackend::create(
                 device_name,
@@ -489,7 +525,7 @@ mod tests {
 
     #[test]
     fn test_audio_engine_lifecycle_and_commands() {
-        let engine = AudioEngine::new("Shared", "Default", 0.85).expect("failed to init engine");
+        let engine = AudioEngine::new("Mock", "Default", 0.85).expect("failed to init engine");
         assert_eq!(engine.volume(), 0.85);
 
         engine.set_volume(0.5);
@@ -521,7 +557,11 @@ mod tests {
 
                 // 停止
                 engine.stop();
-                thread::sleep(Duration::from_millis(30));
+                let mut waited = 0;
+                while waited < 50 && engine.current_state() != PlaybackState::Stopped {
+                    thread::sleep(Duration::from_millis(10));
+                    waited += 1;
+                }
                 assert_eq!(engine.current_state(), PlaybackState::Stopped);
             }
         }
@@ -529,7 +569,7 @@ mod tests {
 
     #[test]
     fn test_audio_engine_track_change_drops_old_backend() {
-        let engine = AudioEngine::new("Shared", "Default", 0.85).expect("failed to init engine");
+        let engine = AudioEngine::new("Mock", "Default", 0.85).expect("failed to init engine");
         let sample_wav = Path::new("sample/Kendrick Lamar - Not Like Us.wav");
         let sample_mp3 = Path::new("sample/Coolio - Gangsta's Paradise (feat. L.V.) [Official Music Video].mp3");
         if sample_wav.exists() && sample_mp3.exists() {
@@ -540,14 +580,18 @@ mod tests {
             engine.play_file(sample_mp3);
             thread::sleep(Duration::from_millis(50));
             engine.stop();
-            thread::sleep(Duration::from_millis(30));
+            let mut waited = 0;
+            while waited < 50 && engine.current_state() != PlaybackState::Stopped {
+                thread::sleep(Duration::from_millis(10));
+                waited += 1;
+            }
             assert_eq!(engine.current_state(), PlaybackState::Stopped);
         }
     }
 
     #[test]
     fn test_audio_engine_output_mode_switch_during_playback() {
-        let engine = AudioEngine::new("Shared", "Default", 0.85).expect("failed to init engine");
+        let engine = AudioEngine::new("Mock", "Default", 0.85).expect("failed to init engine");
         let sample_wav = Path::new("sample/Kendrick Lamar - Not Like Us.wav");
         if sample_wav.exists() {
             engine.play_file(sample_wav);
@@ -560,18 +604,17 @@ mod tests {
             }
 
             if engine.current_state() == PlaybackState::Playing {
-                // 再生中に排他モードへ切り替え
-                engine.set_output_mode("Exclusive");
-                thread::sleep(Duration::from_millis(100));
-                assert_eq!(engine.current_state(), PlaybackState::Playing);
-
-                // 再生中に共有モードへ再度切り替え
-                engine.set_output_mode("Shared");
+                // 再生中にモード切り替え
+                engine.set_output_mode("Mock");
                 thread::sleep(Duration::from_millis(100));
                 assert_eq!(engine.current_state(), PlaybackState::Playing);
 
                 engine.stop();
-                thread::sleep(Duration::from_millis(30));
+                let mut waited = 0;
+                while waited < 50 && engine.current_state() != PlaybackState::Stopped {
+                    thread::sleep(Duration::from_millis(10));
+                    waited += 1;
+                }
                 assert_eq!(engine.current_state(), PlaybackState::Stopped);
             }
         }

@@ -19,7 +19,7 @@ impl<'a> Widget for DeviceSelectModal<'a> {
         let modal_area = centered_rect(60, 50, area);
         Clear.render(modal_area, buf);
 
-        let title = format!(" [ {} ] ", self.i18n.t("modals.device_select_title"));
+        let title = format!(" [ {} ] ", self.i18n.t("modal.device_select"));
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(self.theme.primary))
@@ -29,6 +29,7 @@ impl<'a> Widget for DeviceSelectModal<'a> {
         let inner_area = block.inner(modal_area);
         block.render(modal_area, buf);
 
+        let default_badge_str = self.i18n.t("modal.default_badge");
         let items: Vec<ListItem> = self
             .devices
             .iter()
@@ -36,7 +37,7 @@ impl<'a> Widget for DeviceSelectModal<'a> {
             .map(|(idx, dev)| {
                 let is_sel = idx == self.selected_idx;
                 let prefix = if is_sel { " ▶ " } else { "   " };
-                let def_badge = if dev.is_default { " (Default)" } else { "" };
+                let def_badge = if dev.is_default { default_badge_str.as_str() } else { "" };
                 let text = format!("{}{}{}", prefix, dev.name, def_badge);
 
                 let style = if is_sel {
@@ -63,7 +64,7 @@ impl<'a> Widget for HelpModal<'a> {
         let modal_area = centered_rect(70, 70, area);
         Clear.render(modal_area, buf);
 
-        let title = format!(" [ {} ] ", self.i18n.t("modals.help_title"));
+        let title = format!(" [ {} ] ", self.i18n.t("modal.help"));
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(self.theme.primary))
@@ -84,14 +85,14 @@ impl<'a> Widget for HelpModal<'a> {
             ("s", self.i18n.t("shortcuts.shuffle")),
             ("e", self.i18n.t("shortcuts.exclusive")),
             ("d", self.i18n.t("shortcuts.devices")),
-            ("Tab / Shift+Tab", self.i18n.t("shortcuts.pane")),
-            ("n / p", "Next / Previous Track".to_string()),
+            ("Tab / Shift+Tab", self.i18n.t("shortcuts.pane_switch")),
+            ("n / p", self.i18n.t("shortcuts.next_prev_track")),
             ("q / Esc", self.i18n.t("shortcuts.quit")),
         ];
 
         let mut lines = Vec::new();
         lines.push(Line::from(Span::styled(
-            "--- Key Bindings Reference ---",
+            format!("--- {} ---", self.i18n.t("modal.key_reference")),
             Style::default().fg(self.theme.text_secondary).bg(self.theme.bg_card),
         )));
         lines.push(Line::from(""));
@@ -105,7 +106,7 @@ impl<'a> Widget for HelpModal<'a> {
 
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "  [ Press Esc / q to close ]",
+            format!("  [ {} ]", self.i18n.t("modal.press_esc_q")),
             Style::default().fg(self.theme.text_secondary).bg(self.theme.bg_card),
         )));
 
@@ -125,7 +126,7 @@ impl<'a> Widget for ErrorModal<'a> {
         let modal_area = centered_rect(50, 30, area);
         Clear.render(modal_area, buf);
 
-        let title = format!(" [ {} ] ", self.i18n.t("modals.error_title"));
+        let title = format!(" [ {} ] ", self.i18n.t("modal.error"));
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Rgb(224, 32, 32)))
@@ -143,7 +144,7 @@ impl<'a> Widget for ErrorModal<'a> {
             )),
             Line::from(""),
             Line::from(Span::styled(
-                "  [ Press Enter / Esc to dismiss ]",
+                format!("  [ {} ]", self.i18n.t("modal.press_dismiss")),
                 Style::default().fg(self.theme.text_secondary).bg(self.theme.bg_card),
             )),
         ];

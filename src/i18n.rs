@@ -127,4 +127,41 @@ mod tests {
         let formatted_en = i18n.t_args("playlist.total_tracks", &[("count", "42")]);
         assert_eq!(formatted_en, "Total 42 tracks");
     }
+
+    #[test]
+    fn test_all_ui_keys_exist_in_both_locales() {
+        let keys = [
+            "app.title", "app.subtitle", "app.mode_shared", "app.mode_exclusive",
+            "playlist.header", "playlist.empty", "playlist.no_directory", "playlist.parent_dir",
+            "track_info.header", "track_info.title", "track_info.artist", "track_info.album",
+            "track_info.format", "track_info.output_mode", "track_info.unknown_artist",
+            "track_info.unknown_album", "track_info.unknown_track", "track_info.no_track_loaded",
+            "track_info.no_album_art_line1", "track_info.no_album_art_line2",
+            "track_info.badge_exclusive", "track_info.badge_shared_fallback", "track_info.badge_shared",
+            "controls.header", "controls.volume", "controls.vol_label", "controls.progress",
+            "controls.status_playing", "controls.status_paused", "controls.status_stopped",
+            "controls.loop_off", "controls.loop_all", "controls.loop_single",
+            "controls.shuf_on", "controls.shuf_off",
+            "modal.device_select", "modal.help", "modal.error",
+            "modal.press_esc_q", "modal.press_dismiss", "modal.default_badge", "modal.key_reference",
+            "shortcuts.play_pause", "shortcuts.select_track", "shortcuts.play_selected",
+            "shortcuts.seek", "shortcuts.volume", "shortcuts.repeat", "shortcuts.shuffle",
+            "shortcuts.exclusive", "shortcuts.devices", "shortcuts.pane_switch",
+            "shortcuts.next_prev_track", "shortcuts.help", "shortcuts.quit",
+        ];
+
+        for locale in &["ja", "en"] {
+            let mut i18n = I18n::new(PathBuf::from("locales"), locale).expect("failed to init i18n");
+            i18n.set_locale(locale);
+            for key in &keys {
+                let val = i18n.t(key);
+                assert!(
+                    !val.starts_with("<missing:"),
+                    "Missing translation key '{}' in locale '{}'",
+                    key,
+                    locale
+                );
+            }
+        }
+    }
 }

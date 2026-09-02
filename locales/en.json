@@ -19,7 +19,9 @@
     "empty": "No playable tracks found. Please specify a file or folder.",
     "scanning": "Scanning files...",
     "total_tracks": "Total {count} tracks",
-    "selected": "Selected: {index}/{total}"
+    "selected": "Selected: {index}/{total}",
+    "no_directory": "[No directory]",
+    "parent_dir": "[PARENT DIR]"
   },
   "track_info": {
     "header": "Track Information",
@@ -37,23 +39,46 @@
     "output_mode": "Output Mode",
     "unknown_artist": "Unknown Artist",
     "unknown_album": "Unknown Album",
-    "no_track_loaded": "No track loaded"
+    "unknown_track": "Unknown Track",
+    "no_track_loaded": "No track loaded",
+    "no_album_art_line1": "NO ALBUM",
+    "no_album_art_line2": "ART",
+    "badge_exclusive": "EXCLUSIVE BIT-PERFECT",
+    "badge_shared_fallback": "SHARED (FALLBACK)",
+    "badge_shared": "SHARED AUDIO"
   },
   "controls": {
     "header": "Playback Controls",
     "volume": "Volume: {val}%",
+    "vol_label": "VOL: {val}%",
     "progress": "Progress",
+    "status_playing": "PLAYING",
+    "status_paused": "PAUSED",
+    "status_stopped": "STOPPED",
+    "status_buffering": "BUFFERING",
+    "status_seeking": "SEEKING",
+    "status_changing": "CHANGING",
+    "status_error": "ERROR",
+    "loop_off": "LOOP: OFF",
+    "loop_all": "LOOP: ALL",
+    "loop_single": "LOOP: 1",
     "repeat_off": "OFF",
     "repeat_all": "All",
     "repeat_single": "Single",
     "shuffle_on": "ON",
-    "shuffle_off": "OFF"
+    "shuffle_off": "OFF",
+    "shuf_on": "SHUF: ON",
+    "shuf_off": "SHUF: OFF"
   },
   "modal": {
     "device_select": "Select Audio Device",
     "help": "Keybindings Help",
     "error": "Error",
-    "press_esc": "Press Esc or Enter to close"
+    "press_esc": "Press Esc or Enter to close",
+    "press_esc_q": "Press Esc / q to close",
+    "press_dismiss": "Press Enter / Esc to dismiss",
+    "default_badge": " (Default)",
+    "key_reference": "Key Bindings Reference"
   },
   "shortcuts": {
     "play_pause": "Play / Pause",
@@ -66,6 +91,7 @@
     "exclusive": "Toggle Exclusive Mode",
     "devices": "Select Device",
     "pane_switch": "Switch Pane",
+    "next_prev_track": "Next / Previous Track",
     "help": "Show Help",
     "quit": "Quit"
   },

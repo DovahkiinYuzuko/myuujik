@@ -66,8 +66,8 @@ impl<'a> TrackInfoView<'a> {
                 Line::from(""),
                 Line::from(Span::styled("   ┌──────────┐", Style::default().fg(self.theme.border_unfocused))),
                 Line::from(Span::styled("   │    ■     │", Style::default().fg(self.theme.text_secondary).add_modifier(Modifier::BOLD))),
-                Line::from(Span::styled("   │ NO ALBUM │", Style::default().fg(self.theme.text_secondary))),
-                Line::from(Span::styled("   │   ART    │", Style::default().fg(self.theme.text_secondary))),
+                Line::from(Span::styled(format!("   │ {} │", self.i18n.t("track_info.no_album_art_line1")), Style::default().fg(self.theme.text_secondary))),
+                Line::from(Span::styled(format!("   │   {}    │", self.i18n.t("track_info.no_album_art_line2")), Style::default().fg(self.theme.text_secondary))),
                 Line::from(Span::styled("   └──────────┘", Style::default().fg(self.theme.border_unfocused))),
             ];
             let para = Paragraph::new(placeholder).style(Style::default().bg(Color::Rgb(15, 18, 26)));
@@ -81,8 +81,8 @@ impl<'a> TrackInfoView<'a> {
                 meta.file_path
                     .file_stem()
                     .and_then(|s| s.to_str())
-                    .unwrap_or("Unknown Track")
-                    .to_string()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| self.i18n.t("track_info.unknown_track"))
             });
             let artist = meta.artist.clone().unwrap_or_else(|| self.i18n.t("track_info.unknown_artist"));
             let album = meta.album.clone().unwrap_or_else(|| self.i18n.t("track_info.unknown_album"));
@@ -114,11 +114,11 @@ impl<'a> TrackInfoView<'a> {
             ]));
 
             let mode_badge = if self.is_exclusive {
-                Span::styled(" [ EXCLUSIVE BIT-PERFECT ] ", Style::default().fg(self.theme.accent_exclusive).bg(Color::Rgb(35, 25, 10)).add_modifier(Modifier::BOLD))
+                Span::styled(format!(" [ {} ] ", self.i18n.t("track_info.badge_exclusive")), Style::default().fg(self.theme.accent_exclusive).bg(Color::Rgb(35, 25, 10)).add_modifier(Modifier::BOLD))
             } else if self.is_fallback {
-                Span::styled(" [ SHARED (FALLBACK) ] ", Style::default().fg(Color::Yellow).bg(Color::Rgb(35, 30, 10)).add_modifier(Modifier::BOLD))
+                Span::styled(format!(" [ {} ] ", self.i18n.t("track_info.badge_shared_fallback")), Style::default().fg(Color::Yellow).bg(Color::Rgb(35, 30, 10)).add_modifier(Modifier::BOLD))
             } else {
-                Span::styled(" [ SHARED AUDIO ] ", Style::default().fg(self.theme.primary).bg(Color::Rgb(15, 25, 45)))
+                Span::styled(format!(" [ {} ] ", self.i18n.t("track_info.badge_shared")), Style::default().fg(self.theme.primary).bg(Color::Rgb(15, 25, 45)))
             };
 
             lines.push(Line::from(vec![

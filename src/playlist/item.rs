@@ -5,9 +5,6 @@ pub struct PlaylistItem {
     pub id: usize,
     pub path: PathBuf,
     pub display_name: String,
-    pub duration_secs: Option<f64>,
-    pub artist: Option<String>,
-    pub album: Option<String>,
 }
 
 impl PlaylistItem {
@@ -23,9 +20,6 @@ impl PlaylistItem {
             id,
             path: path_buf,
             display_name,
-            duration_secs: None,
-            artist: None,
-            album: None,
         }
     }
 }

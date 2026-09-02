@@ -19,7 +19,9 @@
     "empty": "再生可能な楽曲がありません。フォルダまたはファイルを指定してください。",
     "scanning": "ファイルを走査中...",
     "total_tracks": "全 {count} 曲",
-    "selected": "選択中: {index}/{total}"
+    "selected": "選択中: {index}/{total}",
+    "no_directory": "[ディレクトリ未指定]",
+    "parent_dir": "[親フォルダ]"
   },
   "track_info": {
     "header": "楽曲情報",
@@ -37,23 +39,46 @@
     "output_mode": "出力モード",
     "unknown_artist": "不明なアーティスト",
     "unknown_album": "不明なアルバム",
-    "no_track_loaded": "トラックが読み込まれていません"
+    "unknown_track": "不明なトラック",
+    "no_track_loaded": "トラックが読み込まれていません",
+    "no_album_art_line1": "NO ALBUM",
+    "no_album_art_line2": "ART",
+    "badge_exclusive": "EXCLUSIVE BIT-PERFECT",
+    "badge_shared_fallback": "SHARED (FALLBACK)",
+    "badge_shared": "SHARED AUDIO"
   },
   "controls": {
     "header": "再生コントロール",
     "volume": "音量: {val}%",
+    "vol_label": "VOL: {val}%",
     "progress": "進捗",
+    "status_playing": "PLAYING",
+    "status_paused": "PAUSED",
+    "status_stopped": "STOPPED",
+    "status_buffering": "BUFFERING",
+    "status_seeking": "SEEKING",
+    "status_changing": "CHANGING",
+    "status_error": "ERROR",
+    "loop_off": "LOOP: OFF",
+    "loop_all": "LOOP: ALL",
+    "loop_single": "LOOP: 1",
     "repeat_off": "OFF",
     "repeat_all": "全曲",
     "repeat_single": "1曲",
     "shuffle_on": "ON",
-    "shuffle_off": "OFF"
+    "shuffle_off": "OFF",
+    "shuf_on": "SHUF: ON",
+    "shuf_off": "SHUF: OFF"
   },
   "modal": {
     "device_select": "出力デバイス選択",
     "help": "ショートカットヘルプ",
     "error": "エラー",
-    "press_esc": "Esc または Enter で閉じる"
+    "press_esc": "Esc または Enter で閉じる",
+    "press_esc_q": "Esc / q で閉じる",
+    "press_dismiss": "Enter / Esc で閉じる",
+    "default_badge": " (既定)",
+    "key_reference": "キーバインド一覧"
   },
   "shortcuts": {
     "play_pause": "再生 / 一時停止",
@@ -66,6 +91,7 @@
     "exclusive": "排他モード切替",
     "devices": "デバイス選択",
     "pane_switch": "ペイン切替",
+    "next_prev_track": "次の曲 / 前の曲",
     "help": "ヘルプ表示",
     "quit": "終了"
   },

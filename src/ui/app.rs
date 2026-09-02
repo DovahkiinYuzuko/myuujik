@@ -666,7 +666,8 @@ mod tests {
 
     #[test]
     fn test_app_keybindings_dispatch() {
-        let config = AppConfig::default();
+        let mut config = AppConfig::default();
+        config.audio.output_mode = "Mock".to_string();
         if let Ok(mut app) = App::new(&config, None) {
             // Spaceキーでトグル
             app.handle_key_event(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
@@ -711,7 +712,8 @@ mod tests {
 
     #[test]
     fn test_app_mouse_controls() {
-        let config = AppConfig::default();
+        let mut config = AppConfig::default();
+        config.audio.output_mode = "Mock".to_string();
         if let Ok(mut app) = App::new(&config, None) {
             // 領域の設定
             app.playlist_area = Rect::new(0, 0, 30, 20);

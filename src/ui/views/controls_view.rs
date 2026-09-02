@@ -32,13 +32,13 @@ impl<'a> Widget for ControlsView<'a> {
         };
 
         let status_badge = match self.playback_state {
-            PlaybackState::Playing => "● PLAYING",
-            PlaybackState::Paused => "❚❚ PAUSED",
-            PlaybackState::Stopped => "■ STOPPED",
-            PlaybackState::Buffering { .. } => "⟳ BUFFERING",
-            PlaybackState::Seeking { .. } => "⟲ SEEKING",
-            PlaybackState::TrackChanging { .. } => "⟳ CHANGING",
-            PlaybackState::Error { .. } => "▲ ERROR",
+            PlaybackState::Playing => format!("● {}", self.i18n.t("controls.status_playing")),
+            PlaybackState::Paused => format!("❚❚ {}", self.i18n.t("controls.status_paused")),
+            PlaybackState::Stopped => format!("■ {}", self.i18n.t("controls.status_stopped")),
+            PlaybackState::Buffering { .. } => format!("⟳ {}", self.i18n.t("controls.status_buffering")),
+            PlaybackState::Seeking { .. } => format!("⟲ {}", self.i18n.t("controls.status_seeking")),
+            PlaybackState::TrackChanging { .. } => format!("⟳ {}", self.i18n.t("controls.status_changing")),
+            PlaybackState::Error { .. } => format!("▲ {}", self.i18n.t("controls.status_error")),
         };
 
         let title = format!(" [ {} ] ", self.i18n.t("controls.header"));
@@ -88,19 +88,20 @@ impl<'a> Widget for ControlsView<'a> {
 
         // 2. ステータス行
         let repeat_str = match self.repeat_mode {
-            RepeatMode::Off => "LOOP: OFF",
-            RepeatMode::All => "LOOP: ALL",
-            RepeatMode::Single => "LOOP: 1",
+            RepeatMode::Off => self.i18n.t("controls.loop_off"),
+            RepeatMode::All => self.i18n.t("controls.loop_all"),
+            RepeatMode::Single => self.i18n.t("controls.loop_single"),
         };
 
         let shuffle_str = if self.is_shuffle {
-            "SHUF: ON"
+            self.i18n.t("controls.shuf_on")
         } else {
-            "SHUF: OFF"
+            self.i18n.t("controls.shuf_off")
         };
 
         let vol_percent = (self.volume * 100.0).round() as u32;
-        let vol_str = format!("VOL: {}%", vol_percent);
+        let vol_pct_str = vol_percent.to_string();
+        let vol_str = self.i18n.t_args("controls.vol_label", &[("val", &vol_pct_str)]);
 
         let status_spans = vec![
             Span::styled(
