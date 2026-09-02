@@ -22,6 +22,7 @@ use ratatui::Terminal;
 use std::error::Error;
 use std::io::stdout;
 use std::path::PathBuf;
+use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 pub struct App {
@@ -51,6 +52,7 @@ pub struct App {
     pub drag_target_secs: Option<f64>,
     pub cursor_moved_at: Instant,
     pub track_changed_at: Instant,
+    pub folder_picker_rx: Option<Receiver<Option<PathBuf>>>,
 }
 
 impl App {
@@ -101,6 +103,7 @@ impl App {
             drag_target_secs: None,
             cursor_moved_at: Instant::now(),
             track_changed_at: Instant::now(),
+            folder_picker_rx: None,
         };
 
         // 初期曲があれば先頭曲を準備して再生開始
@@ -229,6 +232,39 @@ impl App {
 
             if cover_resolved && meta_resolved {
                 self.pending_cd_disc_id = None;
+            }
+        }
+    }
+
+    /// OS標準のフォルダ選択ダイアログをバックグラウンドスレッドで起動する
+    pub fn open_folder_picker(&mut self) {
+        if self.folder_picker_rx.is_some() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.folder_picker_rx = Some(rx);
+
+        std::thread::spawn(move || {
+            let res = crate::ui::dialog::pick_folder();
+            let _ = tx.send(res);
+        });
+    }
+
+    /// フォルダ選択ダイアログの結果をポーリングしてプレイリストに反映する
+    pub fn check_folder_picker_result(&mut self) {
+        if let Some(ref rx) = self.folder_picker_rx {
+            if let Ok(result) = rx.try_recv() {
+                self.folder_picker_rx = None;
+                if let Some(path) = result {
+                    crate::logger::info("App", &format!("Folder picker selected path: {:?}", path));
+                    let count = self.playlist.load_path(&path);
+                    if count > 0 {
+                        if let Some(first_track) = self.playlist.all_tracks().first().cloned() {
+                            self.playlist.select_and_play_path(&first_track.path);
+                            self.apply_track_playback(&first_track.path);
+                        }
+                    }
+                }
             }
         }
     }
@@ -370,6 +406,9 @@ impl App {
             }
             KeyCode::Char('s') => {
                 self.playlist.toggle_shuffle();
+            }
+            KeyCode::Char('o') | KeyCode::Char('O') => {
+                self.open_folder_picker();
             }
             KeyCode::Char('e') => {
                 let target_mode = if self.is_exclusive { "Shared" } else { "Exclusive" };
@@ -591,6 +630,7 @@ impl App {
             if frame_count % 30 == 0 {
                 self.check_pending_cover_art();
             }
+            self.check_folder_picker_result();
             if let Ok(term_size) = terminal.size() {
                 let right_width = (term_size.width as f32 * 0.62).round() as usize;
                 let target_len = right_width.saturating_sub(4).clamp(16, 128);

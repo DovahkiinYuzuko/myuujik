@@ -93,6 +93,7 @@
     "pane_switch": "Switch Pane",
     "next_prev_track": "Next / Previous Track",
     "skip_track": "Shift+←/→, n/p",
+    "open": "Open Folder",
     "help": "Show Help",
     "quit": "Quit"
   },

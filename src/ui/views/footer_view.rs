@@ -22,13 +22,15 @@ impl<'a> Widget for FooterView<'a> {
         block.render(area, buf);
 
         let play_label = self.i18n.t("shortcuts.play_selected");
+        let open_label = self.i18n.t("shortcuts.open");
         let vol_label = self.i18n.t("shortcuts.volume");
         let skip_label = self.i18n.t("shortcuts.next_prev_track");
         let help_label = self.i18n.t("shortcuts.help");
         let quit_label = self.i18n.t("shortcuts.quit");
 
-        let items: [(&str, &str); 8] = [
+        let items: [(&str, &str); 9] = [
             ("Space", "▶/❚❚"),
+            ("O", &open_label),
             ("Shift+←/→", &skip_label),
             ("Enter", &play_label),
             ("Shift+↑/↓, +/-", &vol_label),

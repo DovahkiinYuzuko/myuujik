@@ -1,4 +1,5 @@
 pub mod app;
+pub mod dialog;
 pub mod image_view;
 pub mod modals;
 pub mod theme;
