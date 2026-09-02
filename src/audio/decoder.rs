@@ -57,6 +57,7 @@ pub struct AudioDecoder {
     metadata: TrackMetadata,
     cover_art: Option<CoverArt>,
     disc_id: Option<String>,
+    toc_string: Option<String>,
 }
 
 impl AudioDecoder {
@@ -82,7 +83,7 @@ impl AudioDecoder {
                 let duration_secs = track_info.map(|t| t.duration_secs);
 
                 let mut cover_art = None;
-                if let Some((mime, data)) = cd::metadata::find_cd_album_art(disc_info.drive_letter, Some(&disc_info.disc_id)) {
+                if let Some((mime, data)) = cd::metadata::find_cd_album_art(disc_info.drive_letter, Some(&disc_info.disc_id), Some(&disc_info.toc_string)) {
                     cover_art = Some(CoverArt {
                         mime_type: mime,
                         data,
@@ -106,6 +107,7 @@ impl AudioDecoder {
                     metadata,
                     cover_art,
                     disc_id: Some(disc_info.disc_id),
+                    toc_string: Some(disc_info.toc_string),
                 });
             }
             #[cfg(not(windows))]
@@ -199,6 +201,7 @@ impl AudioDecoder {
             metadata,
             cover_art,
             disc_id: None,
+            toc_string: None,
         })
     }
 
@@ -212,6 +215,10 @@ impl AudioDecoder {
 
     pub fn disc_id(&self) -> Option<&str> {
         self.disc_id.as_deref()
+    }
+
+    pub fn toc_string(&self) -> Option<&str> {
+        self.toc_string.as_deref()
     }
 
     /// 次のパケットをデコードし、インターリーブされた f32 サンプル列を返す。EOF時は Ok(None) を返す。

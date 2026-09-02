@@ -213,12 +213,20 @@ impl CdReader for WindowsCdReader {
             &track_lbas[..track_count],
         );
 
+        let toc_string = super::metadata::create_musicbrainz_toc_string(
+            first,
+            last,
+            leadout_lba,
+            &track_lbas[..track_count],
+        );
+
         Ok(CdDiscInfo {
             drive_letter: self.drive_letter,
             first_track: first,
             last_track: last,
             leadout_lba,
             disc_id,
+            toc_string,
             tracks,
         })
     }
@@ -296,19 +304,22 @@ impl CdReader for WindowsCdReader {
         }
 
         let sectors_read = actual_bytes / CD_RAW_SECTOR_SIZE;
-        if self.current_lba == self.track_start_lba {
-            let hex_preview: Vec<String> = raw_bytes[..actual_bytes.min(16)].iter().map(|b| format!("{:02X}", b)).collect();
-            crate::logger::debug("WindowsCdReader", &format!("CDDA first sector raw bytes: {}", hex_preview.join(" ")));
-        }
         self.current_lba += sectors_read as i32;
 
-        // CD-DA (Red Book 規格) 生データは Big-Endian (MSB優先) 16-bit Signed Stereo PCM
+        // Windows の CD-ROM raw PCM 読み取り (IOCTL_CDROM_RAW_READ) はホスト環境に合わせて Little-Endian (16-bit Signed Stereo PCM)
         let sample_count = actual_bytes / 2;
         let mut samples = Vec::with_capacity(sample_count);
 
         for chunk in raw_bytes[..actual_bytes].chunks_exact(2) {
-            let s16 = i16::from_be_bytes([chunk[0], chunk[1]]);
+            let s16 = i16::from_le_bytes([chunk[0], chunk[1]]);
             samples.push(s16 as f32 / 32768.0);
+        }
+
+        if self.current_lba - sectors_read as i32 == self.track_start_lba {
+            let hex_preview: Vec<String> = raw_bytes[..actual_bytes.min(16)].iter().map(|b| format!("{:02X}", b)).collect();
+            let sample_preview: Vec<String> = samples[..samples.len().min(4)].iter().map(|s| format!("{:.5}", s)).collect();
+            crate::logger::debug("WindowsCdReader", &format!("CDDA first sector raw bytes: {}", hex_preview.join(" ")));
+            crate::logger::debug("WindowsCdReader", &format!("CDDA first decoded samples (f32, LE): [{}]", sample_preview.join(", ")));
         }
 
         Ok(Some(samples))

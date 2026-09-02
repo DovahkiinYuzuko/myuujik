@@ -25,6 +25,7 @@ pub struct CdDiscInfo {
     pub last_track: u8,
     pub leadout_lba: i32,
     pub disc_id: String,
+    pub toc_string: String,
     pub tracks: Vec<CdTrackInfo>,
 }
 
