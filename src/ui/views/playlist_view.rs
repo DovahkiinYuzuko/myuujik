@@ -65,10 +65,16 @@ impl<'a> Widget for PlaylistView<'a> {
             .split(inner_area);
 
         // 1. パンくずリスト
-        let breadcrumb_text = if self.playlist.is_filtered() {
-            format!("> [Search: \"{}\"]", self.playlist.filter_query().unwrap_or(""))
+        let total_items = self.playlist.len();
+        let pos_info = if total_items > 0 {
+            format!(" [{}/{}]", self.playlist.cursor() + 1, total_items)
         } else {
-            self.playlist.breadcrumb()
+            String::new()
+        };
+        let breadcrumb_text = if self.playlist.is_filtered() {
+            format!("> [Search: \"{}\"]{}", self.playlist.filter_query().unwrap_or(""), pos_info)
+        } else {
+            format!("{}{}", self.playlist.breadcrumb(), pos_info)
         };
         let breadcrumb_para = Paragraph::new(Line::from(vec![
             Span::styled(" ", Style::default()),
@@ -101,13 +107,27 @@ impl<'a> Widget for PlaylistView<'a> {
         let cursor_idx = self.playlist.cursor();
         let ticker = MarqueeTicker::default();
 
-        let list_items: Vec<ListItem> = self
-            .playlist
-            .entries()
+        let visible_height = chunks[1].height as usize;
+        let entries = self.playlist.entries();
+        let total_count = entries.len();
+
+        let start_idx = if total_count <= visible_height || visible_height == 0 {
+            0
+        } else if cursor_idx < visible_height / 2 {
+            0
+        } else if cursor_idx + visible_height / 2 >= total_count {
+            total_count.saturating_sub(visible_height)
+        } else {
+            cursor_idx - visible_height / 2
+        };
+        let end_idx = (start_idx + visible_height).min(total_count);
+
+        let list_items: Vec<ListItem> = entries[start_idx..end_idx]
             .iter()
             .enumerate()
-            .map(|(idx, entry)| {
-                let is_cursor = idx == cursor_idx;
+            .map(|(local_idx, entry)| {
+                let actual_idx = start_idx + local_idx;
+                let is_cursor = actual_idx == cursor_idx;
                 let is_playing = match entry {
                     PlaylistEntry::AudioFile(item) => {
                         current_track_path.map(|p| p == &item.path).unwrap_or(false)

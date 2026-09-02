@@ -127,7 +127,8 @@
     "fetching": "Auto-fetching lyrics via acoustic fingerprint...",
     "fetch_success": "Lyrics fetched and saved: {track}",
     "fetch_failed": "Failed to fetch lyrics: {error}",
-    "deleted": "Lyrics file deleted"
+    "deleted": "Lyrics file deleted",
+    "delete_failed": "Failed to delete lyrics file: {error}"
   },
   "errors": {
     "exclusive_failed": "Failed to initialize Exclusive mode. Falling back to Shared mode.",

@@ -252,7 +252,10 @@ impl AudioOutputBackend for SharedBackend {
     }
 
     fn pause(&mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
-        self.is_running = false;
+        if self.is_running {
+            let _ = self.stream.pause();
+            self.is_running = false;
+        }
         Ok(())
     }
 

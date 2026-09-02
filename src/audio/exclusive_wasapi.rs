@@ -54,6 +54,8 @@ impl ExclusiveBackend {
             ),
         );
 
+        let target_device_name = _device_name.to_string();
+
         let thread_handle = std::thread::spawn(move || {
             unsafe {
                 if CoInitializeEx(None, COINIT_MULTITHREADED).is_err() {
@@ -80,10 +82,41 @@ impl ExclusiveBackend {
                     }
                 };
 
-                let device: Result<IMMDevice, _> = enumerator.GetDefaultAudioEndpoint(
-                    eRender,
-                    eConsole,
-                );
+                let device: Result<IMMDevice, _> = if target_device_name.is_empty() || target_device_name == "Default" {
+                    enumerator.GetDefaultAudioEndpoint(eRender, eConsole)
+                } else {
+                    let mut found = None;
+                    if let Ok(collection) = enumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE) {
+                        if let Ok(count) = collection.GetCount() {
+                            for i in 0..count {
+                                if let Ok(dev) = collection.Item(i) {
+                                    use windows::Win32::UI::Shell::PropertiesSystem::PROPERTYKEY;
+                                    use windows::Win32::System::Com::STGM_READ;
+                                    let pkey_friendly_name = PROPERTYKEY {
+                                        fmtid: GUID::from_values(0xa45c254e, 0xdf1c, 0x4efd, [0x80, 0x20, 0x67, 0xd1, 0x46, 0xa8, 0x50, 0xe0]),
+                                        pid: 14,
+                                    };
+                                    if let Ok(store) = dev.OpenPropertyStore(STGM_READ) {
+                                        if let Ok(prop) = store.GetValue(&pkey_friendly_name) {
+                                            let name_str = prop.to_string();
+                                            if name_str.contains(&target_device_name) || target_device_name.contains(&name_str) {
+                                                found = Some(dev);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let Some(dev) = found {
+                        logger::info("ExclusiveBackend", &format!("Selected requested audio device: '{}'", target_device_name));
+                        Ok(dev)
+                    } else {
+                        logger::warn("ExclusiveBackend", &format!("Specified device '{}' not found, falling back to default.", target_device_name));
+                        enumerator.GetDefaultAudioEndpoint(eRender, eConsole)
+                    }
+                };
 
                 let device = match device {
                     Ok(d) => d,
@@ -383,8 +416,13 @@ impl ExclusiveBackend {
                                 }
                                 if frames_read > 0 {
                                     state.current_sample_position.fetch_add(frames_read as u64, Ordering::Relaxed);
-                                    let f32_samples: Vec<f32> = slice.iter().map(|&s| s as f32 / 32768.0).collect();
-                                    state.push_visualizer_samples(&f32_samples);
+                                    let mut f32_chunk = [0.0f32; 1024];
+                                    for chunk in slice.chunks(f32_chunk.len()) {
+                                        for (out_s, &in_s) in f32_chunk.iter_mut().zip(chunk.iter()) {
+                                            *out_s = in_s as f32 / 32768.0;
+                                        }
+                                        state.push_visualizer_samples(&f32_chunk[..chunk.len()]);
+                                    }
                                 }
                             } else {
                                 slice.fill(0);

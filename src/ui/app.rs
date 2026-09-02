@@ -359,7 +359,7 @@ impl App {
         let lrc_path = track_path.with_extension("lrc");
         if lrc_path.exists() {
             if let Err(e) = std::fs::remove_file(&lrc_path) {
-                let msg = format!("削除失敗: {e}");
+                let msg = self.i18n.t_args("lyrics.delete_failed", &[("error", &e.to_string())]);
                 self.lyrics_toast = Some((msg, Instant::now(), true));
                 return;
             }
@@ -799,6 +799,22 @@ impl App {
     }
 
     pub fn run(&mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
+        /// ターミナルの復元を保証する RAII ガード
+        struct TerminalGuard;
+
+        impl Drop for TerminalGuard {
+            fn drop(&mut self) {
+                let _ = disable_raw_mode();
+                let _ = crossterm::execute!(
+                    stdout(),
+                    LeaveAlternateScreen,
+                    crossterm::event::DisableMouseCapture,
+                    crossterm::cursor::Show
+                );
+            }
+        }
+
+        let _guard = TerminalGuard;
         enable_raw_mode()?;
         let mut stdout_handle = stdout();
         crossterm::execute!(stdout_handle, EnterAlternateScreen, crossterm::event::EnableMouseCapture)?;

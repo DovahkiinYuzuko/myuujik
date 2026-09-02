@@ -127,7 +127,8 @@
     "fetching": "音響指紋から歌詞を自動取得中...",
     "fetch_success": "歌詞を取得・保存しました: {track}",
     "fetch_failed": "歌詞の取得に失敗しました: {error}",
-    "deleted": "歌詞ファイルを削除しました"
+    "deleted": "歌詞ファイルを削除しました",
+    "delete_failed": "歌詞の削除に失敗しました: {error}"
   },
   "errors": {
     "exclusive_failed": "排他モードの初期化に失敗しました。Sharedモードで再生します。",

@@ -184,6 +184,8 @@ impl AudioEngine {
         let mut producer: Option<rtrb::Producer<f32>> = None;
         let mut pending_samples: Vec<f32> = Vec::new();
         let mut pending_offset: usize = 0;
+        let mut is_eof = false;
+        let mut eof_drain_started: Option<std::time::Instant> = None;
 
         const RING_BUFFER_SIZE: usize = 96_000; // 約1秒分 (48kHz Stereo)
 
@@ -213,6 +215,8 @@ impl AudioEngine {
                         pending_samples.clear();
                         pending_offset = 0;
                         decoder = None;
+                        is_eof = false;
+                        eof_drain_started = None;
 
                         match AudioDecoder::open(&path) {
                             Ok(dec) => {
@@ -313,6 +317,8 @@ impl AudioEngine {
                         decoder = None;
                         pending_samples.clear();
                         pending_offset = 0;
+                        is_eof = false;
+                        eof_drain_started = None;
                     }
                     EngineCommand::Seek(target_secs) => {
                         logger::info("AudioEngine", &format!("Seek to {:.2}s", target_secs));
@@ -327,6 +333,8 @@ impl AudioEngine {
                                         shared_state.seek_trigger.store(true, Ordering::Release);
                                         pending_samples.clear();
                                         pending_offset = 0;
+                                        is_eof = false;
+                                        eof_drain_started = None;
                                         shared_state.is_playing.store(true, Ordering::Relaxed);
                                         fsm.write().unwrap().transition(PlaybackEvent::BufferReady);
                                     }
@@ -472,8 +480,8 @@ impl AudioEngine {
                             }
                         }
 
-                        // 2. 残余サンプルが空になり、かつリングバッファにまだ空きがあれば、次のパケットを取得
-                        if prod.slots() > 0 {
+                        // 2. 残余サンプルが空になり、かつ未完了（!is_eof）でリングバッファに空きがあれば次のパケットを取得
+                        if !is_eof && prod.slots() > 0 {
                             match dec.next_interleaved_packet() {
                                 Ok(Some(samples)) => {
                                     if samples.is_empty() {
@@ -486,7 +494,7 @@ impl AudioEngine {
                                         let _ = prod.push(s);
                                     }
 
-                                    // 入り切らなかった残りは pending_samples に退避（1サンプルもドロップさせない）
+                                    // 入り切らなかった残りは pending_samples に退避
                                     if to_push < samples.len() {
                                         pending_samples = samples;
                                         pending_offset = to_push;
@@ -494,15 +502,8 @@ impl AudioEngine {
                                     }
                                 }
                                 Ok(None) => {
-                                    // トラック終了（残余サンプルも全てリングバッファに push 済み）
-                                    logger::info("AudioEngine", "Track finished naturally.");
-                                    fsm.write().unwrap().transition(PlaybackEvent::TrackFinished);
-                                    shared_state.is_playing.store(false, Ordering::Relaxed);
-                                    backend = None;
-                                    producer = None;
-                                    decoder = None;
-                                    pending_samples.clear();
-                                    pending_offset = 0;
+                                    logger::info("AudioEngine", "Decoder reached EOF. Draining remaining ring buffer samples...");
+                                    is_eof = true;
                                     break;
                                 }
                                 Err(e) => {
@@ -510,8 +511,36 @@ impl AudioEngine {
                                     fsm.write().unwrap().transition(PlaybackEvent::DeviceError(e.to_string()));
                                     pending_samples.clear();
                                     pending_offset = 0;
+                                    is_eof = false;
                                     break;
                                 }
+                            }
+                        } else if is_eof {
+                            break;
+                        }
+                    }
+
+                    // 3. EOF 到達後の残サンプル完全排出（ドレイン）待機
+                    if is_eof && pending_offset >= pending_samples.len() {
+                        // リングバッファがすべてコンシューマに読み出されたか（空になったか）
+                        let buffer_drained = prod.slots() >= RING_BUFFER_SIZE;
+                        if buffer_drained {
+                            if let Some(drain_start) = eof_drain_started {
+                                // ハードウェア側の出力遅延（DACやOSバッファの再生完了）として50ms待機
+                                if drain_start.elapsed() >= Duration::from_millis(50) {
+                                    logger::info("AudioEngine", "Track finished naturally after full buffer drain.");
+                                    fsm.write().unwrap().transition(PlaybackEvent::TrackFinished);
+                                    shared_state.is_playing.store(false, Ordering::Relaxed);
+                                    backend = None;
+                                    producer = None;
+                                    decoder = None;
+                                    pending_samples.clear();
+                                    pending_offset = 0;
+                                    is_eof = false;
+                                    eof_drain_started = None;
+                                }
+                            } else {
+                                eof_drain_started = Some(std::time::Instant::now());
                             }
                         }
                     }
