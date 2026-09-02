@@ -10,6 +10,8 @@ use symphonia::core::units::TimeBase;
 use symphonia::default::get_probe;
 use symphonia_adapter_libopus::OpusDecoder;
 
+use super::cd::{self, is_cd_path, CdReader};
+
 fn get_registered_codecs() -> &'static CodecRegistry {
     static REGISTRY: std::sync::OnceLock<CodecRegistry> = std::sync::OnceLock::new();
     REGISTRY.get_or_init(|| {
@@ -39,19 +41,77 @@ pub struct CoverArt {
     pub data: Vec<u8>,
 }
 
+enum DecoderSource {
+    Symphonia {
+        format: Box<dyn FormatReader>,
+        decoder: Box<dyn Decoder>,
+        track_id: u32,
+        time_base: Option<TimeBase>,
+        sample_buf: Option<SampleBuffer<f32>>,
+    },
+    Cd(Box<dyn CdReader>),
+}
+
 pub struct AudioDecoder {
-    format: Box<dyn FormatReader>,
-    decoder: Box<dyn Decoder>,
-    track_id: u32,
-    time_base: Option<TimeBase>,
+    source: DecoderSource,
     metadata: TrackMetadata,
     cover_art: Option<CoverArt>,
-    sample_buf: Option<SampleBuffer<f32>>,
 }
 
 impl AudioDecoder {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let path_buf = path.as_ref().to_path_buf();
+
+        if is_cd_path(&path_buf) {
+            #[cfg(windows)]
+            {
+                let mut cd_reader = cd::windows::WindowsCdReader::open(&path_buf)?;
+                let disc_info = cd_reader.read_disc_info()?;
+
+                let track_num = path_buf
+                    .file_name()
+                    .and_then(|f| f.to_str())
+                    .and_then(|name| {
+                        let digits: String = name.chars().filter(|c| c.is_ascii_digit()).collect();
+                        digits.parse::<u8>().ok()
+                    })
+                    .unwrap_or(1);
+
+                let track_info = disc_info.tracks.iter().find(|t| t.track_number == track_num);
+                let duration_secs = track_info.map(|t| t.duration_secs);
+
+                let mut cover_art = None;
+                if let Some((mime, data)) = cd::metadata::find_cd_album_art(disc_info.drive_letter) {
+                    cover_art = Some(CoverArt {
+                        mime_type: mime,
+                        data,
+                    });
+                }
+
+                let metadata = TrackMetadata {
+                    file_path: path_buf,
+                    title: Some(format!("CD Track {:02}", track_num)),
+                    artist: Some("Audio CD".to_string()),
+                    album: Some(format!("CD Drive ({}:)", disc_info.drive_letter)),
+                    duration_secs,
+                    sample_rate: 44100,
+                    channels: 2,
+                    bits_per_sample: Some(16),
+                    codec_name: "CD-DA".to_string(),
+                };
+
+                return Ok(Self {
+                    source: DecoderSource::Cd(Box::new(cd_reader)),
+                    metadata,
+                    cover_art,
+                });
+            }
+            #[cfg(not(windows))]
+            {
+                return Err("CD-DA playback is not supported on this platform".into());
+            }
+        }
+
         let src = File::open(&path_buf)?;
         let mss = MediaSourceStream::new(Box::new(src), Default::default());
 
@@ -127,13 +187,15 @@ impl AudioDecoder {
         let time_base = track.codec_params.time_base;
 
         Ok(Self {
-            format,
-            decoder,
-            track_id,
-            time_base,
+            source: DecoderSource::Symphonia {
+                format,
+                decoder,
+                track_id,
+                time_base,
+                sample_buf: None,
+            },
             metadata,
             cover_art,
-            sample_buf: None,
         })
     }
 
@@ -147,74 +209,96 @@ impl AudioDecoder {
 
     /// 次のパケットをデコードし、インターリーブされた f32 サンプル列を返す。EOF時は Ok(None) を返す。
     pub fn next_interleaved_packet(&mut self) -> Result<Option<Vec<f32>>, Box<dyn std::error::Error + Send + Sync>> {
-        loop {
-            let packet = match self.format.next_packet() {
-                Ok(packet) => packet,
-                Err(symphonia::core::errors::Error::IoError(ref err))
-                    if err.kind() == std::io::ErrorKind::UnexpectedEof =>
-                {
-                    return Ok(None);
-                }
-                Err(symphonia::core::errors::Error::ResetRequired) => {
-                    self.decoder.reset();
-                    continue;
-                }
-                Err(err) => return Err(err.into()),
-            };
+        match &mut self.source {
+            DecoderSource::Cd(reader) => reader.read_next_packet(),
+            DecoderSource::Symphonia {
+                format,
+                decoder,
+                track_id,
+                sample_buf,
+                ..
+            } => {
+                loop {
+                    let packet = match format.next_packet() {
+                        Ok(packet) => packet,
+                        Err(symphonia::core::errors::Error::IoError(ref err))
+                            if err.kind() == std::io::ErrorKind::UnexpectedEof =>
+                        {
+                            return Ok(None);
+                        }
+                        Err(symphonia::core::errors::Error::ResetRequired) => {
+                            decoder.reset();
+                            continue;
+                        }
+                        Err(err) => return Err(err.into()),
+                    };
 
-            if packet.track_id() != self.track_id {
-                continue;
-            }
-
-            match self.decoder.decode(&packet) {
-                Ok(decoded) => {
-                    let spec = *decoded.spec();
-                    let duration = decoded.capacity() as u64;
-
-                    let buf = self.sample_buf.get_or_insert_with(|| {
-                        SampleBuffer::<f32>::new(duration, spec)
-                    });
-
-                    if buf.capacity() < decoded.capacity() {
-                        *buf = SampleBuffer::<f32>::new(duration, spec);
+                    if packet.track_id() != *track_id {
+                        continue;
                     }
-                    buf.copy_interleaved_ref(decoded);
-                    return Ok(Some(buf.samples().to_vec()));
+
+                    match decoder.decode(&packet) {
+                        Ok(decoded) => {
+                            let spec = *decoded.spec();
+                            let duration = decoded.capacity() as u64;
+
+                            let buf = sample_buf.get_or_insert_with(|| {
+                                SampleBuffer::<f32>::new(duration, spec)
+                            });
+
+                            if buf.capacity() < decoded.capacity() {
+                                *buf = SampleBuffer::<f32>::new(duration, spec);
+                            }
+                            buf.copy_interleaved_ref(decoded);
+                            return Ok(Some(buf.samples().to_vec()));
+                        }
+                        Err(symphonia::core::errors::Error::DecodeError(_)) => {
+                            // デコードパケット破損時はスキップして次を試行
+                            continue;
+                        }
+                        Err(symphonia::core::errors::Error::ResetRequired) => {
+                            decoder.reset();
+                            continue;
+                        }
+                        Err(err) => return Err(err.into()),
+                    }
                 }
-                Err(symphonia::core::errors::Error::DecodeError(_)) => {
-                    // デコードパケット破損時はスキップして次を試行
-                    continue;
-                }
-                Err(symphonia::core::errors::Error::ResetRequired) => {
-                    self.decoder.reset();
-                    continue;
-                }
-                Err(err) => return Err(err.into()),
             }
         }
     }
 
     /// 指定された秒数位置へ高速シークを実行し、デコーダをリセットする。
     pub fn seek(&mut self, target_secs: f64) -> Result<f64, Box<dyn std::error::Error + Send + Sync>> {
-        let seek_time = symphonia::core::units::Time::from(target_secs);
-        let actual = self.format.seek(
-            SeekMode::Coarse,
-            SeekTo::Time {
-                time: seek_time,
-                track_id: Some(self.track_id),
-            },
-        )?;
-        self.decoder.reset();
+        match &mut self.source {
+            DecoderSource::Cd(reader) => reader.seek(target_secs),
+            DecoderSource::Symphonia {
+                format,
+                decoder,
+                track_id,
+                time_base,
+                ..
+            } => {
+                let seek_time = symphonia::core::units::Time::from(target_secs);
+                let actual = format.seek(
+                    SeekMode::Coarse,
+                    SeekTo::Time {
+                        time: seek_time,
+                        track_id: Some(*track_id),
+                    },
+                )?;
+                decoder.reset();
 
-        let actual_secs = if let Some(tb) = self.time_base {
-            let time = tb.calc_time(actual.actual_ts);
-            time.seconds as f64 + time.frac
-        } else if self.metadata.sample_rate > 0 {
-            actual.actual_ts as f64 / self.metadata.sample_rate as f64
-        } else {
-            target_secs
-        };
-        Ok(actual_secs.max(0.0))
+                let actual_secs = if let Some(tb) = time_base {
+                    let time = tb.calc_time(actual.actual_ts);
+                    time.seconds as f64 + time.frac
+                } else if self.metadata.sample_rate > 0 {
+                    actual.actual_ts as f64 / self.metadata.sample_rate as f64
+                } else {
+                    target_secs
+                };
+                Ok(actual_secs.max(0.0))
+            }
+        }
     }
 
     fn format_codec(codec: symphonia::core::codecs::CodecType) -> String {

@@ -1,3 +1,4 @@
+pub mod cd;
 pub mod decoder;
 pub mod engine;
 pub mod exclusive_wasapi;

@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 const SUPPORTED_EXTENSIONS: &[&str] = &[
-    "wav", "wave", "mp3", "m4a", "aac", "flac", "alac", "ogg", "opus", "mp4", "m4v", "mov", "webm", "mkv",
+    "wav", "wave", "mp3", "m4a", "aac", "flac", "alac", "ogg", "opus", "mp4", "m4v", "mov", "webm", "mkv", "cda",
 ];
 
 pub struct AudioScanner;
@@ -95,6 +95,8 @@ mod tests {
         assert!(AudioScanner::is_supported_extension(Path::new("video.webm")));
         assert!(AudioScanner::is_supported_extension(Path::new("movie.mkv")));
         assert!(AudioScanner::is_supported_extension(Path::new("clip.mov")));
+        assert!(AudioScanner::is_supported_extension(Path::new("Track01.cda")));
+        assert!(AudioScanner::is_supported_extension(Path::new("track.CDA")));
         assert!(!AudioScanner::is_supported_extension(Path::new("doc.pdf")));
         assert!(!AudioScanner::is_supported_extension(Path::new("notes.txt")));
     }
