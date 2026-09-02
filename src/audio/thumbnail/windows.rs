@@ -1,14 +1,14 @@
 use crate::audio::decoder::CoverArt;
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
-use windows::core::{Interface, PCWSTR};
+use windows::core::PCWSTR;
 use windows::Win32::Foundation::SIZE;
 use windows::Win32::Graphics::Gdi::{
     DeleteObject, GetDIBits, GetObjectW, BITMAP, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HDC,
 };
-use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
+use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
 use windows::Win32::UI::Shell::{
-    IShellItem, IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_RESIZETOFIT,
+    IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_RESIZETOFIT,
 };
 
 /// Windows Shell API (IShellItemImageFactory) を使用して動画のサムネイルを取得する
@@ -30,19 +30,33 @@ pub fn extract_thumbnail<P: AsRef<Path>>(video_path: P) -> Option<CoverArt> {
         .chain(std::iter::once(0))
         .collect();
 
-    // COM 初期化（すでに初期化済みでもエラーは無視可能）
-    let com_inited = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).is_ok() };
+    // COM 初期化 (STA)（すでに初期化済みでもエラーは無視可能）
+    let com_inited = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok() };
 
     let result = (|| -> Option<CoverArt> {
-        let shell_item: IShellItem = unsafe {
-            SHCreateItemFromParsingName(PCWSTR(wide_path.as_ptr()), None).ok()?
+        let factory: IShellItemImageFactory = match unsafe {
+            SHCreateItemFromParsingName(PCWSTR(wide_path.as_ptr()), None)
+        } {
+            Ok(f) => f,
+            Err(e) => {
+                crate::logger::warn(
+                    "Thumbnail",
+                    &format!("SHCreateItemFromParsingName failed for {:?}: {:?}", clean_path, e),
+                );
+                return None;
+            }
         };
 
-        let factory: IShellItemImageFactory = shell_item.cast().ok()?;
-
         let size = SIZE { cx: 250, cy: 250 };
-        let hbitmap = unsafe {
-            factory.GetImage(size, SIIGBF_RESIZETOFIT).ok()?
+        let hbitmap = match unsafe { factory.GetImage(size, SIIGBF_RESIZETOFIT) } {
+            Ok(h) => h,
+            Err(e) => {
+                crate::logger::warn(
+                    "Thumbnail",
+                    &format!("factory.GetImage failed for {:?}: {:?}", clean_path, e),
+                );
+                return None;
+            }
         };
 
         // HBITMAP からサイズおよびピクセルデータを取得
