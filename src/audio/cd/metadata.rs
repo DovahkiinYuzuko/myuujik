@@ -448,42 +448,55 @@ pub fn fetch_cover_art_from_musicbrainz(disc_id: &str, toc_string: Option<&str>)
     None
 }
 
-/// バックグラウンドスレッドで MusicBrainz からのジャケット写真取得を開始する
+/// バックグラウンドスレッドで MusicBrainz からのジャケット写真およびメタデータ取得を開始する
 pub fn trigger_cd_cover_art_fetch(disc_id: &str, toc_string: Option<&str>) {
-    if let Some(path) = get_cached_cover_art_path(disc_id) {
-        if path.exists() {
-            if let Ok(meta) = std::fs::metadata(&path) {
-                if meta.len() > 0 {
-                    return; // 既にキャッシュ済み
-                }
-            }
-        }
+    let has_image = get_cached_cover_art_path(disc_id)
+        .map(|p| p.exists() && std::fs::metadata(&p).map(|m| m.len() > 0).unwrap_or(false))
+        .unwrap_or(false);
+    let has_metadata = get_cached_metadata_path(disc_id)
+        .map(|p| p.exists() && std::fs::metadata(&p).map(|m| m.len() > 0).unwrap_or(false))
+        .unwrap_or(false);
+
+    if has_image && has_metadata {
+        return; // 両方キャッシュ済み
     }
 
     let disc_id_owned = disc_id.to_string();
     let toc_owned = toc_string.map(|s| s.to_string());
     std::thread::spawn(move || {
-        crate::logger::info("CdMetadata", &format!("Background cover art fetch started for DiscID: {}", disc_id_owned));
+        crate::logger::info("CdMetadata", &format!("Background metadata & cover art fetch started for DiscID: {}", disc_id_owned));
         let _ = fetch_cover_art_from_musicbrainz(&disc_id_owned, toc_owned.as_deref());
     });
 }
 
 /// CD ドライブ内または周辺キャッシュ、オンラインからのアルバムアート画像探索
 pub fn find_cd_album_art(drive_letter: char, disc_id: Option<&str>, toc_string: Option<&str>) -> Option<(String, Vec<u8>)> {
-    // 0. ローカルキャッシュに存在するか確認
+    // 0. ローカルキャッシュに存在するか確認（画像またはメタデータが未取得ならバックグラウンド取得を発火）
     if let Some(did) = disc_id {
+        let has_metadata = get_cached_metadata_path(did)
+            .map(|p| p.exists() && std::fs::metadata(&p).map(|m| m.len() > 0).unwrap_or(false))
+            .unwrap_or(false);
+
+        let mut cached_image_data = None;
         if let Some(cache_path) = get_cached_cover_art_path(did) {
             if cache_path.exists() {
                 if let Ok(data) = std::fs::read(&cache_path) {
                     if !data.is_empty() {
                         crate::logger::info("CdMetadata", &format!("Loaded cover art from local cache for DiscID: {}", did));
-                        return Some(("image/jpeg".to_string(), data));
+                        cached_image_data = Some(("image/jpeg".to_string(), data));
                     }
                 }
             }
         }
-        // キャッシュに無ければバックグラウンドでオンライン取得を発火
-        trigger_cd_cover_art_fetch(did, toc_string);
+
+        // 画像またはメタデータのどちらかが未取得なら、バックグラウンド取得を発火
+        if cached_image_data.is_none() || !has_metadata {
+            trigger_cd_cover_art_fetch(did, toc_string);
+        }
+
+        if let Some(img) = cached_image_data {
+            return Some(img);
+        }
     }
 
     let drive_root = format!("{}:\\", drive_letter);
