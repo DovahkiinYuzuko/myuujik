@@ -2,9 +2,9 @@ use crate::audio::decoder::CoverArt;
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::SIZE;
+use windows::Win32::Foundation::{HWND, SIZE};
 use windows::Win32::Graphics::Gdi::{
-    DeleteObject, GetDIBits, GetObjectW, BITMAP, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HDC,
+    DeleteObject, GetDC, GetDIBits, GetObjectW, ReleaseDC, BITMAP, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
 };
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
 use windows::Win32::UI::Shell::{
@@ -91,9 +91,10 @@ pub fn extract_thumbnail<P: AsRef<Path>>(video_path: P) -> Option<CoverArt> {
         };
 
         let mut raw_pixels = vec![0u8; width * height * 4];
+        let screen_dc = unsafe { GetDC(HWND(std::ptr::null_mut())) };
         let lines_copied = unsafe {
             GetDIBits(
-                HDC(std::ptr::null_mut()),
+                screen_dc,
                 hbitmap,
                 0,
                 height as u32,
@@ -103,37 +104,40 @@ pub fn extract_thumbnail<P: AsRef<Path>>(video_path: P) -> Option<CoverArt> {
             )
         };
 
-        // HBITMAP の破棄
-        unsafe { let _ = DeleteObject(hbitmap); }
+        // HDC と HBITMAP の破棄
+        unsafe {
+            let _ = ReleaseDC(HWND(std::ptr::null_mut()), screen_dc);
+            let _ = DeleteObject(hbitmap);
+        }
 
         if lines_copied == 0 {
+            crate::logger::warn("Thumbnail", &format!("GetDIBits copied 0 lines for {:?}", clean_path));
             return None;
         }
 
-        // BGRA から RGBA へ変換（アルファ値がすべて0の場合は255に補正）
-        let mut rgba_pixels = Vec::with_capacity(width * height * 4);
-        let mut has_non_zero_alpha = false;
-
-        for chunk in raw_pixels.chunks_exact(4) {
-            if chunk[3] > 0 {
-                has_non_zero_alpha = true;
-                break;
-            }
-        }
-
+        // BGRA から RGB 3チャンネルへ変換（JPEG保存用）
+        let mut rgb_pixels = Vec::with_capacity(width * height * 3);
         for chunk in raw_pixels.chunks_exact(4) {
             let b = chunk[0];
             let g = chunk[1];
             let r = chunk[2];
-            let a = if has_non_zero_alpha { chunk[3] } else { 255 };
-            rgba_pixels.extend_from_slice(&[r, g, b, a]);
+            rgb_pixels.extend_from_slice(&[r, g, b]);
         }
 
-        let img = image::RgbaImage::from_raw(width as u32, height as u32, rgba_pixels)?;
+        let img = match image::RgbImage::from_raw(width as u32, height as u32, rgb_pixels) {
+            Some(i) => i,
+            None => {
+                crate::logger::warn("Thumbnail", "RgbImage::from_raw failed");
+                return None;
+            }
+        };
 
         let mut jpeg_bytes = Vec::new();
         let mut cursor = std::io::Cursor::new(&mut jpeg_bytes);
-        img.write_to(&mut cursor, image::ImageFormat::Jpeg).ok()?;
+        if let Err(e) = img.write_to(&mut cursor, image::ImageFormat::Jpeg) {
+            crate::logger::warn("Thumbnail", &format!("write_to Jpeg failed: {:?}", e));
+            return None;
+        }
 
         crate::logger::info(
             "Thumbnail",
