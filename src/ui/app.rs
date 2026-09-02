@@ -403,6 +403,39 @@ impl App {
         }
     }
 
+    /// 現在のプレイリストをカレントディレクトリに myuujik_playlist.m3u8 としてエクスポート保存する
+    pub fn export_current_playlist(&mut self) {
+        let target_dir = self
+            .playlist
+            .current_dir()
+            .or_else(|| self.playlist.root_path())
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+        let export_path = target_dir.join("myuujik_playlist.m3u8");
+        let track_count = self.playlist.all_tracks().len();
+
+        if track_count == 0 {
+            return;
+        }
+
+        match self.playlist.export_m3u(&export_path) {
+            Ok(count) => {
+                let msg = self.i18n.t_args("playlist.exported", &[
+                    ("path", "myuujik_playlist.m3u8"),
+                    ("count", &count.to_string()),
+                ]);
+                self.lyrics_toast = Some((msg, Instant::now(), false));
+            }
+            Err(e) => {
+                let msg = self.i18n.t_args("playlist.export_failed", &[
+                    ("error", &e.to_string()),
+                ]);
+                self.lyrics_toast = Some((msg, Instant::now(), true));
+            }
+        }
+    }
+
     /// 現在の再生状態・設定を AppConfig に反映して保存する
     pub fn save_session(&mut self) -> std::io::Result<()> {
         self.config.audio.volume = self.engine.volume();
@@ -614,6 +647,9 @@ impl App {
             }
             KeyCode::Char('s') => {
                 self.playlist.toggle_shuffle();
+            }
+            KeyCode::Char('S') => {
+                self.export_current_playlist();
             }
             KeyCode::Char('/') => {
                 self.is_searching = true;

@@ -91,6 +91,7 @@ impl<'a> Widget for HelpModal<'a> {
             ("a", self.i18n.t("shortcuts.queue")),
             ("r", self.i18n.t("shortcuts.repeat")),
             ("s", self.i18n.t("shortcuts.shuffle")),
+            ("Shift+S", self.i18n.t("shortcuts.export_playlist")),
             ("e", self.i18n.t("shortcuts.exclusive")),
             ("E", self.i18n.t("shortcuts.devices")),
             ("Tab / Shift+Tab", self.i18n.t("shortcuts.pane_switch")),

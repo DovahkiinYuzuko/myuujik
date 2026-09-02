@@ -21,7 +21,9 @@
     "total_tracks": "全 {count} 曲",
     "selected": "選択中: {index}/{total}",
     "no_directory": "[ディレクトリ未指定]",
-    "parent_dir": "[親フォルダ]"
+    "parent_dir": "[親フォルダ]",
+    "exported": "プレイリストを保存しました: {path} ({count}曲)",
+    "export_failed": "プレイリストの保存に失敗しました: {error}"
   },
   "track_info": {
     "header": "楽曲情報",
@@ -100,6 +102,7 @@
     "fetch_lyrics": "歌詞自動取得",
     "delete_lyrics": "歌詞ファイル削除",
     "queue": "再生予約キュー追加/解除",
+    "export_playlist": "プレイリスト保存 (.m3u8)",
     "parent_dir": "親フォルダに戻る",
     "help": "ヘルプ表示",
     "quit": "終了"
@@ -120,6 +123,7 @@
     "lyrics": "l: 歌詞/波形切替",
     "fetch_lyrics": "d: 歌詞取得 / D: 歌詞削除",
     "queue": "a: 再生予約キュー追加/解除",
+    "export_playlist": "S: プレイリスト保存 (.m3u8)",
     "quit": "q / Esc: 終了"
   },
   "lyrics": {

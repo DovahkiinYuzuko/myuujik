@@ -60,6 +60,14 @@ impl PlaylistManager {
 
         let abs_path = std::fs::canonicalize(path_ref).unwrap_or_else(|_| path_ref.to_path_buf());
 
+        if abs_path.is_file() {
+            if let Some(ext) = abs_path.extension().and_then(|e| e.to_str()) {
+                if ext.eq_ignore_ascii_case("m3u") || ext.eq_ignore_ascii_case("m3u8") {
+                    return self.load_m3u(&abs_path);
+                }
+            }
+        }
+
         let scan_target = if abs_path.is_file() {
             let parent = abs_path.parent().unwrap_or(&abs_path).to_path_buf();
             self.root_path = Some(parent.clone());
@@ -87,6 +95,47 @@ impl PlaylistManager {
         self.rebuild_shuffle_indices();
         self.refresh_entries();
         self.all_tracks.len()
+    }
+
+    pub fn load_m3u<P: AsRef<Path>>(&mut self, path: P) -> usize {
+        let path_ref = path.as_ref();
+        let Ok(content) = std::fs::read_to_string(path_ref) else {
+            return 0;
+        };
+
+        let parent_dir = path_ref.parent().unwrap_or(Path::new("."));
+        let entries = crate::playlist::m3u::parse_m3u(&content, parent_dir);
+
+        let parent_canonical = std::fs::canonicalize(parent_dir).unwrap_or_else(|_| parent_dir.to_path_buf());
+        self.root_path = Some(parent_canonical.clone());
+        self.current_dir = Some(parent_canonical);
+
+        self.all_tracks = entries
+            .into_iter()
+            .enumerate()
+            .map(|(idx, entry)| {
+                let mut item = PlaylistItem::from_path(idx, entry.path);
+                if let Some(t) = entry.title {
+                    item.display_name = t;
+                }
+                item
+            })
+            .collect();
+
+        self.cursor = 0;
+        self.current_playing_index = None;
+        self.current_playing_path = None;
+        self.rebuild_shuffle_indices();
+        self.refresh_entries();
+        self.all_tracks.len()
+    }
+
+    pub fn export_m3u<P: AsRef<Path>>(&self, path: P) -> std::io::Result<usize> {
+        let path_ref = path.as_ref();
+        let base_dir = path_ref.parent();
+        let m3u_str = crate::playlist::m3u::export_m3u(&self.all_tracks, base_dir);
+        std::fs::write(path_ref, m3u_str)?;
+        Ok(self.all_tracks.len())
     }
 
     pub fn refresh_entries(&mut self) {
@@ -236,6 +285,10 @@ impl PlaylistManager {
 
     pub fn root_path(&self) -> Option<&Path> {
         self.root_path.as_deref()
+    }
+
+    pub fn current_dir(&self) -> Option<&Path> {
+        self.current_dir.as_deref()
     }
 
     pub fn selected_entry(&self) -> Option<&PlaylistEntry> {
@@ -748,5 +801,29 @@ mod tests {
         let next = pm.next_track().expect("Next track should exist");
         assert_eq!(next.path, t2);
         assert_eq!(pm.queue_position(&t2), None); // キューから消費済み
+    }
+
+    #[test]
+    fn test_playlist_m3u_export_and_import() {
+        let mut pm = PlaylistManager::new();
+        let count = pm.load_path("sample");
+        assert!(count > 0);
+
+        let temp_dir = std::env::temp_dir();
+        let m3u_path = temp_dir.join("test_myuujik_export.m3u8");
+
+        // エクスポート
+        let exported_count = pm.export_m3u(&m3u_path).expect("Failed to export m3u");
+        assert_eq!(exported_count, count);
+        assert!(m3u_path.exists());
+
+        // 新しいマネージャーでインポート
+        let mut pm2 = PlaylistManager::new();
+        let imported_count = pm2.load_path(&m3u_path);
+        assert_eq!(imported_count, count);
+        assert_eq!(pm2.all_tracks().len(), count);
+
+        // クリーンアップ
+        let _ = std::fs::remove_file(&m3u_path);
     }
 }
