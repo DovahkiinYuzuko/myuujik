@@ -9,10 +9,39 @@ use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 pub struct FooterView<'a> {
     pub i18n: &'a I18n,
     pub theme: &'a Theme,
+    pub is_searching: bool,
+    pub search_query: &'a str,
 }
 
 impl<'a> Widget for FooterView<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        if self.is_searching {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(self.theme.border_focus))
+                .style(Style::default().bg(self.theme.bg_card));
+
+            let inner_area = block.inner(area);
+            block.render(area, buf);
+
+            let prompt = format!(" {}: ", self.i18n.t("search.prompt"));
+            let help_text = format!("   [{}]", self.i18n.t("search.help"));
+
+            let spans = vec![
+                Span::styled(prompt, Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    if self.search_query.is_empty() { "" } else { self.search_query },
+                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("█", Style::default().fg(self.theme.primary)),
+                Span::styled(help_text, Style::default().fg(self.theme.text_secondary)),
+            ];
+
+            let para = Paragraph::new(Line::from(spans)).style(Style::default().bg(self.theme.bg_card));
+            para.render(inner_area, buf);
+            return;
+        }
+
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(self.theme.border_unfocused))
@@ -23,17 +52,19 @@ impl<'a> Widget for FooterView<'a> {
 
         let play_label = self.i18n.t("shortcuts.play_selected");
         let open_label = self.i18n.t("shortcuts.open");
+        let search_label = self.i18n.t("shortcuts.search");
         let vol_label = self.i18n.t("shortcuts.volume");
         let skip_label = self.i18n.t("shortcuts.next_prev_track");
         let help_label = self.i18n.t("shortcuts.help");
         let quit_label = self.i18n.t("shortcuts.quit");
 
-        let items: [(&str, &str); 9] = [
+        let items: [(&str, &str); 10] = [
             ("Space", "▶/❚❚"),
             ("O", &open_label),
+            ("/", &search_label),
             ("Shift+←/→", &skip_label),
             ("Enter", &play_label),
-            ("Shift+↑/↓, +/-", &vol_label),
+            ("Shift+↑/↓", &vol_label),
             ("←/→", "±5s"),
             ("v", "Visual"),
             ("?", &help_label),
@@ -43,7 +74,7 @@ impl<'a> Widget for FooterView<'a> {
         let mut spans = Vec::new();
         for (i, (key, label)) in items.iter().enumerate() {
             if i > 0 {
-                spans.push(Span::styled("   ", Style::default().bg(self.theme.bg_card)));
+                spans.push(Span::styled("  ", Style::default().bg(self.theme.bg_card)));
             }
             spans.push(Span::styled(
                 format!("[ {} ]", key),

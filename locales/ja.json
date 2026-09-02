@@ -94,8 +94,14 @@
     "next_prev_track": "次の曲 / 前の曲",
     "skip_track": "Shift+←/→, n/p",
     "open": "フォルダを開く",
+    "search": "検索",
     "help": "ヘルプ表示",
     "quit": "終了"
+  },
+  "search": {
+    "prompt": "検索",
+    "no_results": "一致する楽曲がありません",
+    "help": "↑/↓: 選択  Enter: 再生  Esc: 検索解除"
   },
   "help": {
     "space": "Space: 再生/一時停止",

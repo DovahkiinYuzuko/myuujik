@@ -54,6 +54,8 @@ pub struct App {
     pub track_changed_at: Instant,
     pub folder_picker_rx: Option<Receiver<Option<PathBuf>>>,
     pub config: AppConfig,
+    pub is_searching: bool,
+    pub search_query: String,
 }
 
 impl App {
@@ -117,6 +119,8 @@ impl App {
             track_changed_at: Instant::now(),
             folder_picker_rx: None,
             config: config.clone(),
+            is_searching: false,
+            search_query: String::new(),
         };
 
         let target_track = if let Some(ref saved_path_str) = config.session.last_track_path {
@@ -381,6 +385,46 @@ impl App {
             return;
         }
 
+        // 検索入力モード中のキー処理
+        if self.is_searching {
+            match key.code {
+                KeyCode::Esc => {
+                    self.is_searching = false;
+                    self.search_query.clear();
+                    self.playlist.clear_filter();
+                }
+                KeyCode::Enter => {
+                    if let Some(entry) = self.playlist.selected_entry().cloned() {
+                        if let Some(audio) = entry.audio_item() {
+                            self.playlist.select_and_play_path(&audio.path);
+                            self.apply_track_playback(&audio.path);
+                        }
+                    }
+                    self.is_searching = false;
+                    self.search_query.clear();
+                    self.playlist.clear_filter();
+                }
+                KeyCode::Backspace => {
+                    self.search_query.pop();
+                    self.playlist.set_filter(&self.search_query);
+                }
+                KeyCode::Up => {
+                    self.playlist.move_cursor_up();
+                    self.cursor_moved_at = Instant::now();
+                }
+                KeyCode::Down => {
+                    self.playlist.move_cursor_down();
+                    self.cursor_moved_at = Instant::now();
+                }
+                KeyCode::Char(c) => {
+                    self.search_query.push(c);
+                    self.playlist.set_filter(&self.search_query);
+                }
+                _ => {}
+            }
+            return;
+        }
+
         // メイン画面のキー処理
         // 1. Shift+上下キーによる音量変更
         if key.modifiers.contains(KeyModifiers::SHIFT) && key.code == KeyCode::Up {
@@ -463,6 +507,10 @@ impl App {
             }
             KeyCode::Char('s') => {
                 self.playlist.toggle_shuffle();
+            }
+            KeyCode::Char('/') => {
+                self.is_searching = true;
+                self.search_query.clear();
             }
             KeyCode::Char('o') | KeyCode::Char('O') => {
                 self.open_folder_picker();
@@ -850,6 +898,8 @@ impl App {
                 let footer_view = FooterView {
                     i18n: &self.i18n,
                     theme: &self.theme,
+                    is_searching: self.is_searching,
+                    search_query: &self.search_query,
                 };
                 f.render_widget(footer_view, root_layout[1]);
 
@@ -947,7 +997,19 @@ mod tests {
             app.handle_key_event(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT));
             app.handle_key_event(KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT));
             app.handle_key_event(KeyEvent::new(KeyCode::Char('>'), KeyModifiers::NONE));
-            app.handle_key_event(KeyEvent::new(KeyCode::Char('<'), KeyModifiers::NONE));
+            // 6. / キーによる検索モード遷移・入力・解除テスト
+            app.handle_key_event(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+            assert!(app.is_searching);
+            app.handle_key_event(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE));
+            app.handle_key_event(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
+            app.handle_key_event(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
+            app.handle_key_event(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE));
+            assert_eq!(app.search_query, "test");
+            app.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+            assert_eq!(app.search_query, "tes");
+            app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+            assert!(!app.is_searching);
+            assert_eq!(app.search_query, "");
 
             // qキーで終了
             app.handle_key_event(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));

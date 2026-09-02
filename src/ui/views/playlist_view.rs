@@ -25,7 +25,18 @@ impl<'a> Widget for PlaylistView<'a> {
             self.theme.border_unfocused
         };
 
-        let title = format!(" [ {} ({}) ] ", self.i18n.t("playlist.header"), self.playlist.len());
+        let title = if let Some(q) = self.playlist.filter_query() {
+            format!(
+                " [ {} ({} \"{}\": {}/{}) ] ",
+                self.i18n.t("playlist.header"),
+                self.i18n.t("search.prompt"),
+                q,
+                self.playlist.len(),
+                self.playlist.all_tracks().len()
+            )
+        } else {
+            format!(" [ {} ({}) ] ", self.i18n.t("playlist.header"), self.playlist.len())
+        };
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color))
@@ -54,7 +65,11 @@ impl<'a> Widget for PlaylistView<'a> {
             .split(inner_area);
 
         // 1. パンくずリスト
-        let breadcrumb_text = self.playlist.breadcrumb();
+        let breadcrumb_text = if self.playlist.is_filtered() {
+            format!("> [Search: \"{}\"]", self.playlist.filter_query().unwrap_or(""))
+        } else {
+            self.playlist.breadcrumb()
+        };
         let breadcrumb_para = Paragraph::new(Line::from(vec![
             Span::styled(" ", Style::default()),
             Span::styled(
@@ -68,8 +83,13 @@ impl<'a> Widget for PlaylistView<'a> {
         breadcrumb_para.render(chunks[0], buf);
 
         if self.playlist.is_empty() {
+            let msg = if self.playlist.is_filtered() {
+                self.i18n.t("search.no_results")
+            } else {
+                self.i18n.t("playlist.empty")
+            };
             let empty_msg = Line::from(Span::styled(
-                format!("  {}", self.i18n.t("playlist.empty")),
+                format!("  {}", msg),
                 Style::default().fg(self.theme.text_secondary).bg(self.theme.bg_card),
             ));
             let list = List::new(vec![ListItem::new(empty_msg)]).style(Style::default().bg(self.theme.bg_card));

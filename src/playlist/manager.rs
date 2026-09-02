@@ -25,6 +25,8 @@ pub struct PlaylistManager {
     shuffle_enabled: bool,
     shuffle_indices: Vec<usize>,
     shuffle_pos: usize,
+    filter_query: Option<String>,
+    filtered_entries: Vec<PlaylistEntry>,
 }
 
 impl PlaylistManager {
@@ -42,6 +44,8 @@ impl PlaylistManager {
             shuffle_enabled: false,
             shuffle_indices: Vec::new(),
             shuffle_pos: 0,
+            filter_query: None,
+            filtered_entries: Vec::new(),
         }
     }
 
@@ -177,7 +181,54 @@ impl PlaylistManager {
     }
 
     pub fn entries(&self) -> &[PlaylistEntry] {
-        &self.entries
+        if self.filter_query.is_some() {
+            &self.filtered_entries
+        } else {
+            &self.entries
+        }
+    }
+
+    pub fn is_filtered(&self) -> bool {
+        self.filter_query.is_some()
+    }
+
+    pub fn filter_query(&self) -> Option<&str> {
+        self.filter_query.as_deref()
+    }
+
+    pub fn set_filter(&mut self, query: &str) {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            self.clear_filter();
+            return;
+        }
+        self.filter_query = Some(query.to_string());
+        let lower = trimmed.to_lowercase();
+
+        self.filtered_entries = self.all_tracks
+            .iter()
+            .filter(|item| {
+                let display_match = item.display_name.to_lowercase().contains(&lower);
+                let path_match = item.path.to_string_lossy().to_lowercase().contains(&lower);
+                display_match || path_match
+            })
+            .cloned()
+            .map(PlaylistEntry::AudioFile)
+            .collect();
+
+        self.cursor = 0;
+    }
+
+    pub fn clear_filter(&mut self) {
+        self.filter_query = None;
+        self.filtered_entries.clear();
+        if let Some(ref path) = self.current_playing_path {
+            if let Some(pos) = self.entries.iter().position(|e| e.audio_item().map(|a| &a.path) == Some(path)) {
+                self.cursor = pos;
+                return;
+            }
+        }
+        self.cursor = self.cursor.min(self.entries.len().saturating_sub(1));
     }
 
     pub fn root_path(&self) -> Option<&Path> {
@@ -185,7 +236,7 @@ impl PlaylistManager {
     }
 
     pub fn selected_entry(&self) -> Option<&PlaylistEntry> {
-        self.entries.get(self.cursor)
+        self.entries().get(self.cursor)
     }
 
     pub fn items(&self) -> &[PlaylistItem] {
@@ -193,11 +244,11 @@ impl PlaylistManager {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.entries().is_empty()
     }
 
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.entries().len()
     }
 
     pub fn cursor(&self) -> usize {
@@ -205,23 +256,25 @@ impl PlaylistManager {
     }
 
     pub fn move_cursor_up(&mut self) {
-        if self.entries.is_empty() {
+        let count = self.entries().len();
+        if count == 0 {
             self.cursor = 0;
             return;
         }
         if self.cursor > 0 {
             self.cursor -= 1;
         } else {
-            self.cursor = self.entries.len() - 1;
+            self.cursor = count - 1;
         }
     }
 
     pub fn move_cursor_down(&mut self) {
-        if self.entries.is_empty() {
+        let count = self.entries().len();
+        if count == 0 {
             self.cursor = 0;
             return;
         }
-        if self.cursor + 1 < self.entries.len() {
+        if self.cursor + 1 < count {
             self.cursor += 1;
         } else {
             self.cursor = 0;
@@ -229,8 +282,9 @@ impl PlaylistManager {
     }
 
     pub fn set_cursor(&mut self, index: usize) {
-        if !self.entries.is_empty() {
-            self.cursor = index.min(self.entries.len() - 1);
+        let count = self.entries().len();
+        if count > 0 {
+            self.cursor = index.min(count - 1);
         }
     }
 
@@ -568,5 +622,39 @@ mod tests {
             // ルートからの脱出防止（ルートで go_to_parent しても false）
             assert!(!pm.go_to_parent());
         }
+    }
+
+    #[test]
+    fn test_playlist_incremental_search() {
+        let mut pm = PlaylistManager::new();
+        let count = pm.load_path("sample");
+        assert!(count > 0);
+
+        // 検索前
+        assert!(!pm.is_filtered());
+        assert_eq!(pm.filter_query(), None);
+
+        // "ogg" で検索
+        pm.set_filter("ogg");
+        assert!(pm.is_filtered());
+        assert_eq!(pm.filter_query(), Some("ogg"));
+        for entry in pm.entries() {
+            if let PlaylistEntry::AudioFile(track) = entry {
+                let name = track.display_name.to_lowercase();
+                let path = track.path.to_string_lossy().to_lowercase();
+                assert!(name.contains("ogg") || path.contains("ogg"));
+            } else {
+                panic!("Filtered entries must only contain audio files");
+            }
+        }
+
+        // 大文字小文字無視
+        pm.set_filter("OGG");
+        assert!(pm.len() > 0);
+
+        // フィルタ解除
+        pm.clear_filter();
+        assert!(!pm.is_filtered());
+        assert_eq!(pm.filter_query(), None);
     }
 }

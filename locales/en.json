@@ -94,8 +94,14 @@
     "next_prev_track": "Next / Previous Track",
     "skip_track": "Shift+←/→, n/p",
     "open": "Open Folder",
+    "search": "Search",
     "help": "Show Help",
     "quit": "Quit"
+  },
+  "search": {
+    "prompt": "Search",
+    "no_results": "No matching tracks found",
+    "help": "↑/↓: Select  Enter: Play  Esc: Cancel Search"
   },
   "help": {
     "space": "Space: Play/Pause",
