@@ -105,6 +105,7 @@ impl SharedBackend {
                     }
 
                     if state.seek_trigger.swap(false, Ordering::Acquire) {
+                        while consumer.pop().is_ok() {}
                         fade_in_frames = 64;
                     }
 
@@ -173,6 +174,7 @@ impl SharedBackend {
 
                     // シーク発生時のリサンプラー境界リセットとマイクロフェードイン
                     if state.seek_trigger.swap(false, Ordering::Acquire) {
+                        while consumer.pop().is_ok() {}
                         for ch in 0..src_channels {
                             curr_frame[ch] = 0.0;
                             next_frame[ch] = 0.0;

@@ -27,6 +27,9 @@ impl MockAudioBackend {
         let thread = thread::spawn(move || {
             let mut buf = [0.0f32; 1024];
             while !stop_signal_clone.load(Ordering::Relaxed) {
+                if state.seek_trigger.swap(false, Ordering::Acquire) {
+                    while consumer.pop().is_ok() {}
+                }
                 if is_running_clone.load(Ordering::Relaxed) {
                     let mut read = 0;
                     while read < buf.len() {

@@ -47,6 +47,7 @@ pub struct App {
     pub progress_area: Rect,
     pub status_area: Rect,
     pub is_dragging_seekbar: bool,
+    pub drag_target_secs: Option<f64>,
     pub cursor_moved_at: Instant,
 }
 
@@ -94,6 +95,7 @@ impl App {
             progress_area: Rect::default(),
             status_area: Rect::default(),
             is_dragging_seekbar: false,
+            drag_target_secs: None,
             cursor_moved_at: Instant::now(),
         };
 
@@ -342,12 +344,14 @@ impl App {
 
                 // 1. プログレスバーのクリック -> シーク & ドラッグ開始
                 if Self::is_inside_rect(col, row, self.progress_area) && self.progress_area.width > 0 {
-                    self.is_dragging_seekbar = true;
-                    let offset = col.saturating_sub(self.progress_area.x) as f64;
-                    let ratio = (offset / self.progress_area.width as f64).clamp(0.0, 1.0);
                     let total = self.engine.total_duration_secs();
                     if total > 0.0 {
-                        self.engine.seek(ratio * total);
+                        self.is_dragging_seekbar = true;
+                        let offset = col.saturating_sub(self.progress_area.x) as f64;
+                        let ratio = (offset / self.progress_area.width as f64).clamp(0.0, 1.0);
+                        let target = ratio * total;
+                        self.drag_target_secs = Some(target);
+                        self.engine.seek(target);
                     }
                     return;
                 }
@@ -419,12 +423,17 @@ impl App {
                     let ratio = (offset / self.progress_area.width as f64).clamp(0.0, 1.0);
                     let total = self.engine.total_duration_secs();
                     if total > 0.0 {
-                        self.engine.seek(ratio * total);
+                        self.drag_target_secs = Some(ratio * total);
                     }
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                self.is_dragging_seekbar = false;
+                if self.is_dragging_seekbar {
+                    self.is_dragging_seekbar = false;
+                    if let Some(target) = self.drag_target_secs.take() {
+                        self.engine.seek(target);
+                    }
+                }
             }
             MouseEventKind::Down(MouseButton::Right) => {
                 let col = mouse.column;
@@ -615,9 +624,15 @@ impl App {
                 track_info_view.render_view(right_layout[0], f.buffer_mut());
 
                 // 3. コントロール＆波形描画
+                let cur_secs = if self.is_dragging_seekbar && self.drag_target_secs.is_some() {
+                    self.drag_target_secs.unwrap()
+                } else {
+                    self.engine.current_position_secs()
+                };
+
                 let controls_view = ControlsView {
                     playback_state: &self.engine.current_state(),
-                    current_position_secs: self.engine.current_position_secs(),
+                    current_position_secs: cur_secs,
                     total_duration_secs: self.engine.total_duration_secs(),
                     volume: self.engine.volume(),
                     repeat_mode: self.playlist.repeat_mode(),
@@ -758,6 +773,7 @@ mod tests {
             app.status_area = Rect::new(32, 13, 80, 1);
             app.track_info_area = Rect::new(32, 0, 80, 10);
             app.controls_area = Rect::new(32, 11, 80, 9);
+            app.engine.set_total_duration_for_test(200.0);
 
             // 1. ホイール上下による音量制御テスト
             let initial_vol = app.engine.volume();
@@ -785,6 +801,7 @@ mod tests {
                 modifiers: KeyModifiers::NONE,
             });
             assert!(app.is_dragging_seekbar);
+            assert!(app.drag_target_secs.is_some());
 
             app.handle_mouse_event(MouseEvent {
                 kind: MouseEventKind::Drag(MouseButton::Left),
@@ -793,6 +810,7 @@ mod tests {
                 modifiers: KeyModifiers::NONE,
             });
             assert!(app.is_dragging_seekbar);
+            assert!(app.drag_target_secs.is_some());
 
             app.handle_mouse_event(MouseEvent {
                 kind: MouseEventKind::Up(MouseButton::Left),
@@ -801,6 +819,7 @@ mod tests {
                 modifiers: KeyModifiers::NONE,
             });
             assert!(!app.is_dragging_seekbar);
+            assert!(app.drag_target_secs.is_none());
 
             // 3. ステータス行クリックによる前曲/次曲ボタテスト (offset 18: |◀, offset 27: ▶|)
             app.handle_mouse_event(MouseEvent {

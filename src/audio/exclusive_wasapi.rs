@@ -326,6 +326,10 @@ impl ExclusiveBackend {
                     let is_active = is_running_clone.load(Ordering::Relaxed);
                     let vol = state.get_volume();
 
+                    if state.seek_trigger.swap(false, Ordering::Acquire) {
+                        while consumer.pop().is_ok() {}
+                    }
+
                     if let Ok(p_data) = render_client.GetBuffer(buffer_frame_count) {
                         if is_float {
                             let slice = std::slice::from_raw_parts_mut(p_data as *mut f32, total_buffer_samples);

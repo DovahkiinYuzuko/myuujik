@@ -172,11 +172,11 @@ impl AudioDecoder {
         }
     }
 
-    /// 指定された秒数位置へ高精度シークを実行し、デコーダをリセットする。
+    /// 指定された秒数位置へ高速シークを実行し、デコーダをリセットする。
     pub fn seek(&mut self, target_secs: f64) -> Result<f64, Box<dyn std::error::Error + Send + Sync>> {
         let seek_time = symphonia::core::units::Time::from(target_secs);
         let actual = self.format.seek(
-            SeekMode::Accurate,
+            SeekMode::Coarse,
             SeekTo::Time {
                 time: seek_time,
                 track_id: Some(self.track_id),
@@ -184,8 +184,12 @@ impl AudioDecoder {
         )?;
         self.decoder.reset();
 
-        let actual_secs = actual.actual_ts as f64 / self.metadata.sample_rate as f64;
-        Ok(actual_secs)
+        let actual_secs = if self.metadata.sample_rate > 0 {
+            (actual.actual_ts as f64 / self.metadata.sample_rate as f64).min(target_secs.max(0.0))
+        } else {
+            target_secs
+        };
+        Ok(actual_secs.max(0.0))
     }
 
     fn format_codec(codec: symphonia::core::codecs::CodecType) -> String {

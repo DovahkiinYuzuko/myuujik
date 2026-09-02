@@ -163,6 +163,13 @@ impl AudioEngine {
         self.is_fallback.load(Ordering::Relaxed)
     }
 
+    #[cfg(test)]
+    pub fn set_total_duration_for_test(&self, duration_secs: f64) {
+        self.shared_state.sample_rate.store(48000, Ordering::Relaxed);
+        let frames = (duration_secs * 48000.0) as u64;
+        self.shared_state.total_samples.store(frames, Ordering::Relaxed);
+    }
+
     fn worker_loop(
         cmd_rx: Receiver<EngineCommand>,
         shared_state: Arc<SharedAudioState>,
@@ -306,15 +313,25 @@ impl AudioEngine {
                         if fsm.write().unwrap().transition(PlaybackEvent::Seek(target_secs)) {
                             shared_state.is_playing.store(false, Ordering::Relaxed);
                             if let Some(dec) = decoder.as_mut() {
-                                if let Ok(actual) = dec.seek(target_secs) {
-                                    let rate = shared_state.sample_rate.load(Ordering::Relaxed).max(1);
-                                    let sample_pos = (actual * rate as f64) as u64;
-                                    shared_state.current_sample_position.store(sample_pos, Ordering::Relaxed);
-                                    shared_state.seek_trigger.store(true, Ordering::Release);
+                                match dec.seek(target_secs) {
+                                    Ok(actual) => {
+                                        let rate = shared_state.sample_rate.load(Ordering::Relaxed).max(1);
+                                        let sample_pos = (actual * rate as f64) as u64;
+                                        shared_state.current_sample_position.store(sample_pos, Ordering::Relaxed);
+                                        shared_state.seek_trigger.store(true, Ordering::Release);
+                                        shared_state.is_playing.store(true, Ordering::Relaxed);
+                                        fsm.write().unwrap().transition(PlaybackEvent::BufferReady);
+                                    }
+                                    Err(e) => {
+                                        logger::error("AudioEngine", &format!("Seek failed: {}", e));
+                                        shared_state.is_playing.store(true, Ordering::Relaxed);
+                                        fsm.write().unwrap().transition(PlaybackEvent::BufferReady);
+                                    }
                                 }
+                            } else {
+                                shared_state.is_playing.store(true, Ordering::Relaxed);
+                                fsm.write().unwrap().transition(PlaybackEvent::BufferReady);
                             }
-                            shared_state.is_playing.store(true, Ordering::Relaxed);
-                            fsm.write().unwrap().transition(PlaybackEvent::BufferReady);
                         }
                     }
                     EngineCommand::SetVolume(vol) => {
@@ -421,8 +438,9 @@ impl AudioEngine {
             if let (Some(dec), Some(prod)) = (decoder.as_mut(), producer.as_mut()) {
                 let is_playing = shared_state.is_playing.load(Ordering::Relaxed);
                 if is_playing {
-                    let slots = prod.slots();
-                    if slots >= 4096 {
+                    let mut packets_decoded = 0;
+                    while prod.slots() >= 4096 && packets_decoded < 4 {
+                        packets_decoded += 1;
                         match dec.next_interleaved_packet() {
                             Ok(Some(samples)) => {
                                 for s in samples {
@@ -439,10 +457,12 @@ impl AudioEngine {
                                 backend = None;
                                 producer = None;
                                 decoder = None;
+                                break;
                             }
                             Err(e) => {
                                 logger::error("AudioEngine", &format!("Decoding packet error: {}", e));
                                 fsm.write().unwrap().transition(PlaybackEvent::DeviceError(e.to_string()));
+                                break;
                             }
                         }
                     }
