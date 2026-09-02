@@ -8,6 +8,7 @@ pub mod shared;
 pub mod traits;
 pub mod visualizer;
 pub mod thumbnail;
+pub mod lyrics;
 
 pub use decoder::{AudioDecoder, CoverArt, TrackMetadata};
 pub use engine::{AudioEngine, EngineCommand};

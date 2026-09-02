@@ -1,8 +1,10 @@
+use crate::audio::lyrics::Lyrics;
 use crate::audio::visualizer::VisualizerMode;
 use crate::fsm::playback_fsm::PlaybackState;
 use crate::i18n::I18n;
 use crate::playlist::manager::RepeatMode;
 use crate::ui::theme::Theme;
+use crate::ui::views::lyrics_view::LyricsView;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -19,6 +21,8 @@ pub struct ControlsView<'a> {
     pub is_focused: bool,
     pub visualizer_mode: VisualizerMode,
     pub waveform_points: &'a [f32],
+    pub lyrics: Option<&'a Lyrics>,
+    pub show_lyrics: bool,
     pub i18n: &'a I18n,
     pub theme: &'a Theme,
 }
@@ -114,6 +118,12 @@ impl<'a> Widget for ControlsView<'a> {
         let vol_pct_str = vol_percent.to_string();
         let vol_str = self.i18n.t_args("controls.vol_label", &[("val", &vol_pct_str)]);
 
+        let mode_label = if self.show_lyrics {
+            self.i18n.t("lyrics.title")
+        } else {
+            self.visualizer_mode.display_name().to_string()
+        };
+
         let status_spans = vec![
             Span::styled(
                 format!(" {} ", status_badge),
@@ -153,7 +163,7 @@ impl<'a> Widget for ControlsView<'a> {
             ),
             Span::raw(" "),
             Span::styled(
-                format!(" [ {} ] ", self.visualizer_mode.display_name()),
+                format!(" [ {} ] ", mode_label),
                 Style::default().fg(Color::Rgb(56, 189, 248)).bg(Color::Rgb(20, 28, 45)).add_modifier(Modifier::BOLD),
             ),
         ];
@@ -161,9 +171,19 @@ impl<'a> Widget for ControlsView<'a> {
         let status_para = Paragraph::new(Line::from(status_spans)).style(Style::default().bg(self.theme.bg_card));
         status_para.render(chunks[1], buf);
 
-        // 3. ビジュアライザ描画 (AviUtl Type 3 / Type 4 / Type 3 Polar)
+        // 3. ビジュアライザまたは同期歌詞描画
         if chunks[2].height > 0 && chunks[2].width > 0 {
-            match self.visualizer_mode {
+            if self.show_lyrics {
+                let elapsed_ms = (self.current_position_secs * 1000.0).max(0.0) as u64;
+                let lyrics_view = LyricsView {
+                    lyrics: self.lyrics,
+                    elapsed_ms,
+                    i18n: self.i18n,
+                    theme: self.theme,
+                };
+                lyrics_view.render(chunks[2], buf);
+            } else {
+                match self.visualizer_mode {
                 VisualizerMode::Type3 => {
                     // METER: 等幅スペーシング（バー1列：スペース1列）による複数行バーグラフ (底辺接地)
                     let blocks = [' ', ' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
@@ -229,4 +249,5 @@ impl<'a> Widget for ControlsView<'a> {
             }
         }
     }
+}
 }

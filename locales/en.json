@@ -95,7 +95,8 @@
     "skip_track": "Shift+←/→, n/p",
     "open": "Open Folder",
     "search": "Search",
-    "help": "Show Help",
+    "lyrics": "Lyrics/Wave",
+    "help": "Help",
     "quit": "Quit"
   },
   "search": {
@@ -111,7 +112,13 @@
     "repeat": "r: Repeat Mode",
     "shuffle": "s: Shuffle",
     "mode": "e: Output Mode",
+    "lyrics": "l: Toggle Lyrics/Waveform",
     "quit": "q / Esc: Quit"
+  },
+  "lyrics": {
+    "title": "Synchronized Lyrics",
+    "not_found": "No lyrics file (.lrc) found",
+    "loading": "Loading lyrics..."
   },
   "errors": {
     "exclusive_failed": "Failed to initialize Exclusive mode. Falling back to Shared mode.",

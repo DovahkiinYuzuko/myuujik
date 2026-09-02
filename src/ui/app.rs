@@ -56,6 +56,8 @@ pub struct App {
     pub config: AppConfig,
     pub is_searching: bool,
     pub search_query: String,
+    pub current_lyrics: Option<crate::audio::lyrics::Lyrics>,
+    pub show_lyrics: bool,
 }
 
 impl App {
@@ -121,6 +123,8 @@ impl App {
             config: config.clone(),
             is_searching: false,
             search_query: String::new(),
+            current_lyrics: None,
+            show_lyrics: false,
         };
 
         let target_track = if let Some(ref saved_path_str) = config.session.last_track_path {
@@ -178,6 +182,7 @@ impl App {
 
     /// トラックパスからのデコーダ生成、メタデータ/カバーアート取得、および再生開始の共通処理
     pub fn apply_track_playback(&mut self, path: &std::path::Path) {
+        self.current_lyrics = crate::audio::lyrics::load_for_track(path);
         if let Ok(decoder) = AudioDecoder::open(path) {
             let meta = decoder.metadata().clone();
             let cover = decoder.cover_art().cloned();
@@ -543,6 +548,9 @@ impl App {
             KeyCode::Char('v') | KeyCode::Char('V') => {
                 self.visualizer_mode = self.visualizer_mode.next();
             }
+            KeyCode::Char('l') | KeyCode::Char('L') => {
+                self.show_lyrics = !self.show_lyrics;
+            }
             _ => {}
         }
     }
@@ -889,6 +897,8 @@ impl App {
                     is_focused: active_pane == UiPane::Controls,
                     visualizer_mode: self.visualizer_mode,
                     waveform_points: &self.waveform_points,
+                    lyrics: self.current_lyrics.as_ref(),
+                    show_lyrics: self.show_lyrics,
                     i18n: &self.i18n,
                     theme: &self.theme,
                 };

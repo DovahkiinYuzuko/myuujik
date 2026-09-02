@@ -95,6 +95,7 @@
     "skip_track": "Shift+←/→, n/p",
     "open": "フォルダを開く",
     "search": "検索",
+    "lyrics": "歌詞/波形",
     "help": "ヘルプ表示",
     "quit": "終了"
   },
@@ -111,7 +112,13 @@
     "repeat": "r: リピート切替",
     "shuffle": "s: シャッフル切替",
     "mode": "e: 出力モード切替",
+    "lyrics": "l: 歌詞/波形切替",
     "quit": "q / Esc: 終了"
+  },
+  "lyrics": {
+    "title": "歌詞",
+    "not_found": "歌詞ファイル (.lrc) が見つかりません",
+    "loading": "歌詞を読み込み中..."
   },
   "errors": {
     "exclusive_failed": "排他モードの初期化に失敗しました。Sharedモードで再生します。",
