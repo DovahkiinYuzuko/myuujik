@@ -103,6 +103,7 @@
     "delete_lyrics": "Delete Lyrics File",
     "queue": "Add/Remove Playback Queue",
     "export_playlist": "Export Playlist (.m3u8)",
+    "reorder_track": "Reorder Track (Alt+↑/↓)",
     "parent_dir": "Go to Parent Folder",
     "help": "Help",
     "quit": "Quit"
@@ -124,6 +125,7 @@
     "fetch_lyrics": "d: Fetch / D: Delete Lyrics",
     "queue": "a: Add/Remove Playback Queue",
     "export_playlist": "S: Export Playlist (.m3u8)",
+    "reorder_track": "Alt+↑/↓: Reorder Track",
     "quit": "q / Esc: Quit"
   },
   "lyrics": {

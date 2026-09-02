@@ -103,6 +103,7 @@
     "delete_lyrics": "歌詞ファイル削除",
     "queue": "再生予約キュー追加/解除",
     "export_playlist": "プレイリスト保存 (.m3u8)",
+    "reorder_track": "曲順並び替え (Alt+↑/↓)",
     "parent_dir": "親フォルダに戻る",
     "help": "ヘルプ表示",
     "quit": "終了"
@@ -124,6 +125,7 @@
     "fetch_lyrics": "d: 歌詞取得 / D: 歌詞削除",
     "queue": "a: 再生予約キュー追加/解除",
     "export_playlist": "S: プレイリスト保存 (.m3u8)",
+    "reorder_track": "Alt+↑/↓: 選択曲を上下に並び替え",
     "quit": "q / Esc: 終了"
   },
   "lyrics": {

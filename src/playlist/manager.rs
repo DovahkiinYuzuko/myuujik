@@ -337,6 +337,96 @@ impl PlaylistManager {
         }
     }
 
+    /// 選択中の楽曲エントリを1つ上に移動し、カーソルも追従する。
+    /// 検索フィルタ中や、上に対象がない場合、または上の要素がフォルダの場合は false を返す。
+    pub fn move_item_up(&mut self) -> bool {
+        if self.filter_query.is_some() || self.cursor == 0 {
+            return false;
+        }
+
+        // 現在のエントリと上のエントリが共に AudioFile であることを確認（フォルダ境界ガード）
+        let current_is_audio = matches!(self.entries.get(self.cursor), Some(PlaylistEntry::AudioFile(_)));
+        let prev_is_audio = matches!(self.entries.get(self.cursor - 1), Some(PlaylistEntry::AudioFile(_)));
+
+        if !current_is_audio || !prev_is_audio {
+            return false;
+        }
+
+        let curr_path = self.entries[self.cursor].audio_item().unwrap().path.clone();
+        let prev_path = self.entries[self.cursor - 1].audio_item().unwrap().path.clone();
+
+        // 1. entries のスワップ
+        self.entries.swap(self.cursor, self.cursor - 1);
+
+        // 2. items の順序同期
+        if let (Some(pos1), Some(pos2)) = (
+            self.items.iter().position(|it| it.path == curr_path),
+            self.items.iter().position(|it| it.path == prev_path),
+        ) {
+            self.items.swap(pos1, pos2);
+        }
+
+        // 3. all_tracks の順序同期
+        if let (Some(pos1), Some(pos2)) = (
+            self.all_tracks.iter().position(|it| it.path == curr_path),
+            self.all_tracks.iter().position(|it| it.path == prev_path),
+        ) {
+            self.all_tracks.swap(pos1, pos2);
+        }
+
+        // 4. 再生中インデックスの同期
+        self.sync_current_index_with_items();
+
+        // 5. カーソルを上に追従
+        self.cursor -= 1;
+        true
+    }
+
+    /// 選択中の楽曲エントリを1つ下に移動し、カーソルも追従する。
+    /// 検索フィルタ中や、下に対象がない場合、または下の要素がフォルダの場合は false を返す。
+    pub fn move_item_down(&mut self) -> bool {
+        if self.filter_query.is_some() || self.cursor + 1 >= self.entries.len() {
+            return false;
+        }
+
+        // 現在のエントリと下のエントリが共に AudioFile であることを確認（フォルダ境界ガード）
+        let current_is_audio = matches!(self.entries.get(self.cursor), Some(PlaylistEntry::AudioFile(_)));
+        let next_is_audio = matches!(self.entries.get(self.cursor + 1), Some(PlaylistEntry::AudioFile(_)));
+
+        if !current_is_audio || !next_is_audio {
+            return false;
+        }
+
+        let curr_path = self.entries[self.cursor].audio_item().unwrap().path.clone();
+        let next_path = self.entries[self.cursor + 1].audio_item().unwrap().path.clone();
+
+        // 1. entries のスワップ
+        self.entries.swap(self.cursor, self.cursor + 1);
+
+        // 2. items の順序同期
+        if let (Some(pos1), Some(pos2)) = (
+            self.items.iter().position(|it| it.path == curr_path),
+            self.items.iter().position(|it| it.path == next_path),
+        ) {
+            self.items.swap(pos1, pos2);
+        }
+
+        // 3. all_tracks の順序同期
+        if let (Some(pos1), Some(pos2)) = (
+            self.all_tracks.iter().position(|it| it.path == curr_path),
+            self.all_tracks.iter().position(|it| it.path == next_path),
+        ) {
+            self.all_tracks.swap(pos1, pos2);
+        }
+
+        // 4. 再生中インデックスの同期
+        self.sync_current_index_with_items();
+
+        // 5. カーソルを下に追従
+        self.cursor += 1;
+        true
+    }
+
     pub fn set_cursor(&mut self, index: usize) {
         let count = self.entries().len();
         if count > 0 {
@@ -825,5 +915,58 @@ mod tests {
 
         // クリーンアップ
         let _ = std::fs::remove_file(&m3u_path);
+    }
+
+    #[test]
+    fn test_playlist_manual_reordering() {
+        let mut pm = PlaylistManager::new();
+        let count = pm.load_path("sample");
+        assert!(count >= 2);
+
+        // 最初のオーディオファイルの位置を見つける
+        let first_audio_idx = pm
+            .entries()
+            .iter()
+            .position(|e| matches!(e, PlaylistEntry::AudioFile(_)))
+            .expect("Must have at least one audio file");
+
+        // 1. 最上段（または最初のエントリ）で move_item_up を試行
+        pm.set_cursor(first_audio_idx);
+        // 上がフォルダまたは先頭なら move_item_up はガードされて false になる
+        if first_audio_idx == 0 || !matches!(pm.entries()[first_audio_idx - 1], PlaylistEntry::AudioFile(_)) {
+            assert!(!pm.move_item_up());
+            assert_eq!(pm.cursor(), first_audio_idx);
+        }
+
+        // 2. 2番目のオーディオファイルを見つけて、上と入れ替える
+        let second_audio_idx = pm
+            .entries()
+            .iter()
+            .enumerate()
+            .position(|(i, e)| i > first_audio_idx && matches!(e, PlaylistEntry::AudioFile(_)));
+
+        if let Some(second_idx) = second_audio_idx {
+            // 直前が AudioFile の場合のみ
+            if matches!(pm.entries()[second_idx - 1], PlaylistEntry::AudioFile(_)) {
+                let track_before = pm.entries()[second_idx].audio_item().unwrap().path.clone();
+                let upper_before = pm.entries()[second_idx - 1].audio_item().unwrap().path.clone();
+
+                pm.set_cursor(second_idx);
+                let ok = pm.move_item_up();
+                assert!(ok);
+                assert_eq!(pm.cursor(), second_idx - 1); // カーソルが追従して -1 になる
+
+                // 入れ替わっていることを確認
+                assert_eq!(pm.entries()[second_idx - 1].audio_item().unwrap().path, track_before);
+                assert_eq!(pm.entries()[second_idx].audio_item().unwrap().path, upper_before);
+
+                // move_item_down で元に戻す
+                let ok_down = pm.move_item_down();
+                assert!(ok_down);
+                assert_eq!(pm.cursor(), second_idx);
+                assert_eq!(pm.entries()[second_idx].audio_item().unwrap().path, track_before);
+                assert_eq!(pm.entries()[second_idx - 1].audio_item().unwrap().path, upper_before);
+            }
+        }
     }
 }

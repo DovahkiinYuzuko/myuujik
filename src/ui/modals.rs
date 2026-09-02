@@ -82,6 +82,7 @@ impl<'a> Widget for HelpModal<'a> {
             ("← / →", self.i18n.t("shortcuts.seek")),
             ("Shift+← / Shift+→", self.i18n.t("shortcuts.next_prev_track")),
             ("Shift+↑/↓, +/-", self.i18n.t("shortcuts.volume")),
+            ("Alt+↑ / Alt+↓", self.i18n.t("shortcuts.reorder_track")),
             ("O", self.i18n.t("shortcuts.open")),
             ("/", self.i18n.t("shortcuts.search")),
             ("l", self.i18n.t("shortcuts.lyrics")),

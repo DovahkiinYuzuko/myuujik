@@ -586,6 +586,20 @@ impl App {
             return;
         }
 
+        // 3. Alt+上下キーによるプレイリスト選択曲の手動並び替え
+        if key.modifiers.contains(KeyModifiers::ALT) && key.code == KeyCode::Up {
+            if self.playlist.move_item_up() {
+                self.cursor_moved_at = Instant::now();
+            }
+            return;
+        }
+        if key.modifiers.contains(KeyModifiers::ALT) && key.code == KeyCode::Down {
+            if self.playlist.move_item_down() {
+                self.cursor_moved_at = Instant::now();
+            }
+            return;
+        }
+
         match key.code {
             KeyCode::Char('+') | KeyCode::Char('=') => {
                 self.increase_volume();
@@ -1172,6 +1186,10 @@ mod tests {
 
             app.handle_key_event(KeyEvent::new(KeyCode::Char('-'), KeyModifiers::NONE));
             assert_eq!((app.engine.volume() * 100.0).round() as u32, 20);
+
+            // Alt+Up / Alt+Down で並び替えディスパッチ（空プレイリストでもクラッシュしない）
+            app.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::ALT));
+            app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::ALT));
 
             // rキーでリピート切り替え
             assert_eq!(app.playlist.repeat_mode(), crate::playlist::manager::RepeatMode::Off);
