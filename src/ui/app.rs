@@ -50,6 +50,7 @@ pub struct App {
     pub is_dragging_seekbar: bool,
     pub drag_target_secs: Option<f64>,
     pub cursor_moved_at: Instant,
+    pub track_changed_at: Instant,
 }
 
 impl App {
@@ -99,6 +100,7 @@ impl App {
             is_dragging_seekbar: false,
             drag_target_secs: None,
             cursor_moved_at: Instant::now(),
+            track_changed_at: Instant::now(),
         };
 
         // 初期曲があれば先頭曲を準備して再生開始
@@ -166,6 +168,7 @@ impl App {
 
             self.current_metadata = Some(meta);
             self.cover_widget.update_cover_art(&path_str, cover.as_ref());
+            self.track_changed_at = Instant::now();
         }
         self.engine.play_file(path);
     }
@@ -351,7 +354,12 @@ impl App {
             }
             KeyCode::Right => {
                 let cur = self.engine.current_position_secs();
-                self.engine.seek(cur + 5.0);
+                let total = self.engine.total_duration_secs();
+                if total > 0.0 && cur + 5.0 >= total {
+                    self.play_next_track();
+                } else {
+                    self.engine.seek(cur + 5.0);
+                }
             }
             KeyCode::Left => {
                 let cur = self.engine.current_position_secs();
@@ -715,6 +723,7 @@ impl App {
                     cover_widget: &mut self.cover_widget,
                     i18n: &self.i18n,
                     theme: &self.theme,
+                    elapsed_ms: self.track_changed_at.elapsed().as_millis(),
                 };
                 track_info_view.render_view(right_layout[0], f.buffer_mut());
 
