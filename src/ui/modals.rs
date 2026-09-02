@@ -86,7 +86,7 @@ impl<'a> Widget for HelpModal<'a> {
             ("e", self.i18n.t("shortcuts.exclusive")),
             ("d", self.i18n.t("shortcuts.devices")),
             ("Tab / Shift+Tab", self.i18n.t("shortcuts.pane_switch")),
-            ("n / p", self.i18n.t("shortcuts.next_prev_track")),
+            ("Shift+← / Shift+→, n / p", self.i18n.t("shortcuts.next_prev_track")),
             ("q / Esc", self.i18n.t("shortcuts.quit")),
         ];
 

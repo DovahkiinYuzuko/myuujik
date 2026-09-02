@@ -92,6 +92,7 @@
     "devices": "デバイス選択",
     "pane_switch": "ペイン切替",
     "next_prev_track": "次の曲 / 前の曲",
+    "skip_track": "Shift+←/→, n/p",
     "help": "ヘルプ表示",
     "quit": "終了"
   },

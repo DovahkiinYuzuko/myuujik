@@ -46,6 +46,7 @@ pub struct App {
     pub controls_area: Rect,
     pub progress_area: Rect,
     pub status_area: Rect,
+    pub is_dragging_seekbar: bool,
     pub cursor_moved_at: Instant,
 }
 
@@ -92,6 +93,7 @@ impl App {
             controls_area: Rect::default(),
             progress_area: Rect::default(),
             status_area: Rect::default(),
+            is_dragging_seekbar: false,
             cursor_moved_at: Instant::now(),
         };
 
@@ -229,6 +231,16 @@ impl App {
             return;
         }
 
+        // 2. Shift+左右キーによる曲スキップ（前の曲 / 次の曲）
+        if key.modifiers.contains(KeyModifiers::SHIFT) && key.code == KeyCode::Left {
+            self.play_prev_track();
+            return;
+        }
+        if key.modifiers.contains(KeyModifiers::SHIFT) && key.code == KeyCode::Right {
+            self.play_next_track();
+            return;
+        }
+
         match key.code {
             KeyCode::Char('+') | KeyCode::Char('=') => {
                 self.increase_volume();
@@ -305,10 +317,10 @@ impl App {
             KeyCode::BackTab => {
                 self.hfsm.prev_pane();
             }
-            KeyCode::Char('n') => {
+            KeyCode::Char('n') | KeyCode::Char('>') => {
                 self.play_next_track();
             }
-            KeyCode::Char('p') => {
+            KeyCode::Char('p') | KeyCode::Char('<') => {
                 self.play_prev_track();
             }
             KeyCode::Char('v') | KeyCode::Char('V') => {
@@ -328,8 +340,9 @@ impl App {
                 let col = mouse.column;
                 let row = mouse.row;
 
-                // 1. プログレスバーのクリック -> シーク
+                // 1. プログレスバーのクリック -> シーク & ドラッグ開始
                 if Self::is_inside_rect(col, row, self.progress_area) && self.progress_area.width > 0 {
+                    self.is_dragging_seekbar = true;
                     let offset = col.saturating_sub(self.progress_area.x) as f64;
                     let ratio = (offset / self.progress_area.width as f64).clamp(0.0, 1.0);
                     let total = self.engine.total_duration_secs();
@@ -339,16 +352,20 @@ impl App {
                     return;
                 }
 
-                // 2. ステータス行のクリック -> 各種バッジのトグル
+                // 2. ステータス行のクリック -> 各種バッジのトグルおよび前曲/次曲ボタン
                 if Self::is_inside_rect(col, row, self.status_area) {
                     let offset_x = col.saturating_sub(self.status_area.x);
                     if offset_x < 15 {
                         self.engine.toggle_pause();
-                    } else if offset_x < 28 {
+                    } else if offset_x < 24 {
+                        self.play_prev_track();
+                    } else if offset_x < 33 {
+                        self.play_next_track();
+                    } else if offset_x < 46 {
                         self.playlist.toggle_repeat();
-                    } else if offset_x < 41 {
+                    } else if offset_x < 59 {
                         self.playlist.toggle_shuffle();
-                    } else if offset_x < 54 {
+                    } else if offset_x < 72 {
                         self.increase_volume();
                     } else {
                         self.visualizer_mode = self.visualizer_mode.next();
@@ -394,6 +411,20 @@ impl App {
 
                 // 5. その他の領域（空白領域など） -> 従来通り再生/一時停止トグル
                 self.engine.toggle_pause();
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                let col = mouse.column;
+                if self.is_dragging_seekbar && self.progress_area.width > 0 {
+                    let offset = col.saturating_sub(self.progress_area.x) as f64;
+                    let ratio = (offset / self.progress_area.width as f64).clamp(0.0, 1.0);
+                    let total = self.engine.total_duration_secs();
+                    if total > 0.0 {
+                        self.engine.seek(ratio * total);
+                    }
+                }
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                self.is_dragging_seekbar = false;
             }
             MouseEventKind::Down(MouseButton::Right) => {
                 let col = mouse.column;
@@ -704,6 +735,12 @@ mod tests {
             app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
             assert_eq!(app.hfsm.modal, ModalState::None);
 
+            // 5. Shift+Left / Shift+Right による曲スキップテスト
+            app.handle_key_event(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT));
+            app.handle_key_event(KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT));
+            app.handle_key_event(KeyEvent::new(KeyCode::Char('>'), KeyModifiers::NONE));
+            app.handle_key_event(KeyEvent::new(KeyCode::Char('<'), KeyModifiers::NONE));
+
             // qキーで終了
             app.handle_key_event(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
             assert!(app.should_quit);
@@ -717,10 +754,10 @@ mod tests {
         if let Ok(mut app) = App::new(&config, None) {
             // 領域の設定
             app.playlist_area = Rect::new(0, 0, 30, 20);
-            app.progress_area = Rect::new(32, 12, 40, 1);
-            app.status_area = Rect::new(32, 13, 40, 1);
-            app.track_info_area = Rect::new(32, 0, 40, 10);
-            app.controls_area = Rect::new(32, 11, 40, 9);
+            app.progress_area = Rect::new(32, 12, 80, 1);
+            app.status_area = Rect::new(32, 13, 80, 1);
+            app.track_info_area = Rect::new(32, 0, 80, 10);
+            app.controls_area = Rect::new(32, 11, 80, 9);
 
             // 1. ホイール上下による音量制御テスト
             let initial_vol = app.engine.volume();
@@ -739,27 +776,67 @@ mod tests {
                 modifiers: KeyModifiers::NONE,
             });
 
-            // 2. ステータス行クリックによるリピートトグルテスト (offset 16: LOOPバッジ)
-            assert_eq!(app.playlist.repeat_mode(), crate::playlist::manager::RepeatMode::Off);
+            // 2. プログレスバーのクリック＆ドラッグによるシーク操作テスト
+            assert!(!app.is_dragging_seekbar);
+            app.handle_mouse_event(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 42,
+                row: 12,
+                modifiers: KeyModifiers::NONE,
+            });
+            assert!(app.is_dragging_seekbar);
+
+            app.handle_mouse_event(MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Left),
+                column: 52,
+                row: 12,
+                modifiers: KeyModifiers::NONE,
+            });
+            assert!(app.is_dragging_seekbar);
+
+            app.handle_mouse_event(MouseEvent {
+                kind: MouseEventKind::Up(MouseButton::Left),
+                column: 52,
+                row: 12,
+                modifiers: KeyModifiers::NONE,
+            });
+            assert!(!app.is_dragging_seekbar);
+
+            // 3. ステータス行クリックによる前曲/次曲ボタテスト (offset 18: |◀, offset 27: ▶|)
             app.handle_mouse_event(MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
                 column: 32 + 18,
                 row: 13,
                 modifiers: KeyModifiers::NONE,
             });
+            app.handle_mouse_event(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 32 + 27,
+                row: 13,
+                modifiers: KeyModifiers::NONE,
+            });
+
+            // 4. ステータス行クリックによるリピートトグルテスト (offset 38: LOOPバッジ)
+            assert_eq!(app.playlist.repeat_mode(), crate::playlist::manager::RepeatMode::Off);
+            app.handle_mouse_event(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 32 + 38,
+                row: 13,
+                modifiers: KeyModifiers::NONE,
+            });
             assert_eq!(app.playlist.repeat_mode(), crate::playlist::manager::RepeatMode::All);
 
-            // 3. ステータス行クリックによるシャッフルトグルテスト (offset 30: SHUFバッジ)
+            // 5. ステータス行クリックによるシャッフルトグルテスト (offset 50: SHUFバッジ)
             assert!(!app.playlist.is_shuffle());
             app.handle_mouse_event(MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
-                column: 32 + 30,
+                column: 32 + 50,
                 row: 13,
                 modifiers: KeyModifiers::NONE,
             });
             assert!(app.playlist.is_shuffle());
 
-            // 4. トラック情報領域クリックによる出力モードトグルテスト
+            // 6. トラック情報領域クリックによる出力モードトグルテスト
             let initial_mode = app.is_exclusive;
             app.handle_mouse_event(MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),

@@ -86,6 +86,17 @@ impl<'a> Widget for ControlsView<'a> {
             .label(Span::styled(time_str, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)));
         gauge.render(chunks[0], buf);
 
+        // インタラクティブシークバー: 再生ヘッドつまみ (●) の描画
+        if chunks[0].width > 0 && chunks[0].height > 0 {
+            let head_x = chunks[0].x + (ratio * (chunks[0].width.saturating_sub(1) as f64)).round() as u16;
+            if head_x < chunks[0].x + chunks[0].width {
+                if let Some(cell) = buf.cell_mut((head_x, chunks[0].y)) {
+                    cell.set_symbol("●");
+                    cell.set_style(Style::default().fg(Color::Rgb(255, 255, 255)).bg(self.theme.primary).add_modifier(Modifier::BOLD));
+                }
+            }
+        }
+
         // 2. ステータス行
         let repeat_str = match self.repeat_mode {
             RepeatMode::Off => self.i18n.t("controls.loop_off"),
@@ -114,6 +125,16 @@ impl<'a> Widget for ControlsView<'a> {
                     })
                     .add_modifier(Modifier::BOLD)
                     .bg(self.theme.bg_card),
+            ),
+            Span::raw(" "),
+            Span::styled(
+                " [ |◀ ] ",
+                Style::default().fg(self.theme.text_primary).bg(Color::Rgb(28, 34, 50)).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+            Span::styled(
+                " [ ▶| ] ",
+                Style::default().fg(self.theme.text_primary).bg(Color::Rgb(28, 34, 50)).add_modifier(Modifier::BOLD),
             ),
             Span::raw(" "),
             Span::styled(
