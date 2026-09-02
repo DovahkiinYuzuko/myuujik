@@ -44,11 +44,12 @@ impl<'a> TrackInfoView<'a> {
         let inner_area = block.inner(area);
         block.render(area, buf);
 
-        // 左右分割：左側カバーアート（幅26）、右側テキスト情報
+        // 左右分割：左側カバーアート（幅26）、余白（幅2）、右側テキスト情報
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
                 Constraint::Length(26), // カバーアート領域
+                Constraint::Length(2),  // 心地よい余白（スペーサー）
                 Constraint::Min(20),    // メタデータ領域
             ])
             .split(inner_area);
@@ -65,8 +66,10 @@ impl<'a> TrackInfoView<'a> {
             art_box.render(chunks[0], buf);
 
             let placeholder = vec![
+                Line::from(""),
                 Line::from(Span::styled("   ┌──────────┐", Style::default().fg(self.theme.border_unfocused))),
-                Line::from(Span::styled(format!("   │   {}    │", self.i18n.t("track_info.no_album_art_line1")), Style::default().fg(self.theme.text_secondary))),
+                Line::from(Span::styled("   │    ■     │", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD))),
+                Line::from(Span::styled(format!("   │ {} │", self.i18n.t("track_info.no_album_art_line1")), Style::default().fg(self.theme.text_secondary))),
                 Line::from(Span::styled(format!("   │   {}    │", self.i18n.t("track_info.no_album_art_line2")), Style::default().fg(self.theme.text_secondary))),
                 Line::from(Span::styled("   └──────────┘", Style::default().fg(self.theme.border_unfocused))),
             ];
@@ -74,11 +77,13 @@ impl<'a> TrackInfoView<'a> {
             para.render(art_inner, buf);
         }
 
-        // テキスト情報（2段モダンレイアウト ＆ マーキー対応）
+        // テキスト情報（2段モダンレイアウト ＆ マーキー対応 ＆ 高コントラスト）
         let mut lines = Vec::new();
+        let label_style = Style::default().fg(Color::Rgb(148, 163, 184)).bg(self.theme.bg_card);
+
         if let Some(meta) = self.metadata {
             let ticker = MarqueeTicker::default();
-            let avail_w = (chunks[1].width as usize).saturating_sub(1);
+            let avail_w = (chunks[2].width as usize).saturating_sub(1);
 
             let raw_title = meta.title.clone().unwrap_or_else(|| {
                 meta.file_path
@@ -95,33 +100,24 @@ impl<'a> TrackInfoView<'a> {
             let display_album = ticker.render(&raw_album, avail_w, self.elapsed_ms);
 
             // 1. TITLE
-            lines.push(Line::from(Span::styled(
-                self.i18n.t("track_info.title"),
-                Style::default().fg(self.theme.text_secondary).add_modifier(Modifier::DIM).bg(self.theme.bg_card),
-            )));
+            lines.push(Line::from(Span::styled(self.i18n.t("track_info.title"), label_style)));
             lines.push(Line::from(Span::styled(
                 display_title,
                 Style::default().fg(Color::White).add_modifier(Modifier::BOLD).bg(self.theme.bg_card),
             )));
 
             // 2. ARTIST
-            lines.push(Line::from(Span::styled(
-                self.i18n.t("track_info.artist"),
-                Style::default().fg(self.theme.text_secondary).add_modifier(Modifier::DIM).bg(self.theme.bg_card),
-            )));
+            lines.push(Line::from(Span::styled(self.i18n.t("track_info.artist"), label_style)));
             lines.push(Line::from(Span::styled(
                 display_artist,
-                Style::default().fg(self.theme.text_primary).add_modifier(Modifier::BOLD).bg(self.theme.bg_card),
+                Style::default().fg(Color::White).bg(self.theme.bg_card),
             )));
 
             // 3. ALBUM
-            lines.push(Line::from(Span::styled(
-                self.i18n.t("track_info.album"),
-                Style::default().fg(self.theme.text_secondary).add_modifier(Modifier::DIM).bg(self.theme.bg_card),
-            )));
+            lines.push(Line::from(Span::styled(self.i18n.t("track_info.album"), label_style)));
             lines.push(Line::from(Span::styled(
                 display_album,
-                Style::default().fg(self.theme.text_secondary).bg(self.theme.bg_card),
+                Style::default().fg(Color::Rgb(226, 232, 240)).bg(self.theme.bg_card),
             )));
 
             // 4. FORMAT
@@ -133,10 +129,7 @@ impl<'a> TrackInfoView<'a> {
                 meta.channels
             );
             lines.push(Line::from(vec![
-                Span::styled(
-                    format!("{}: ", self.i18n.t("track_info.format")),
-                    Style::default().fg(self.theme.text_secondary).add_modifier(Modifier::DIM).bg(self.theme.bg_card),
-                ),
+                Span::styled(format!("{}: ", self.i18n.t("track_info.format")), label_style),
                 Span::styled(format_str, Style::default().fg(self.theme.primary).bg(self.theme.bg_card)),
             ]));
 
@@ -159,20 +152,17 @@ impl<'a> TrackInfoView<'a> {
             };
 
             lines.push(Line::from(vec![
-                Span::styled(
-                    format!("{}: ", self.i18n.t("track_info.output_mode")),
-                    Style::default().fg(self.theme.text_secondary).add_modifier(Modifier::DIM).bg(self.theme.bg_card),
-                ),
+                Span::styled(format!("{}: ", self.i18n.t("track_info.output_mode")), label_style),
                 mode_badge,
             ]));
         } else {
             lines.push(Line::from(Span::styled(
                 self.i18n.t("track_info.no_track_loaded"),
-                Style::default().fg(self.theme.text_secondary).bg(self.theme.bg_card),
+                Style::default().fg(Color::Rgb(148, 163, 184)).bg(self.theme.bg_card),
             )));
         }
 
         let para = Paragraph::new(lines).style(Style::default().bg(self.theme.bg_card));
-        para.render(chunks[1], buf);
+        para.render(chunks[2], buf);
     }
 }
