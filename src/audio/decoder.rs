@@ -155,17 +155,13 @@ impl AudioDecoder {
 
         let mut format = probed.format;
 
-        // デコード可能なオーディオトラックの探索（映像や字幕トラックを無視し、有効なオーディオを検出）
-        let (track, decoder) = format
-            .tracks()
-            .iter()
-            .find_map(|t| {
-                get_registered_codecs()
-                    .make(&t.codec_params, &DecoderOptions::default())
-                    .ok()
-                    .map(|dec| (t.clone(), dec))
-            })
-            .ok_or("No playable audio track found in media container")?;
+        // TrackNegotiationFsm による堅牢なトラック選定・パラメータ正規化・デコーダ確立
+        let mut negotiation_fsm = crate::fsm::track_negotiation_fsm::TrackNegotiationFsm::new();
+        let (track, decoder) = negotiation_fsm.negotiate(
+            format.tracks(),
+            get_registered_codecs(),
+            &DecoderOptions::default(),
+        )?;
 
         let track_id = track.id;
         let sample_rate = track.codec_params.sample_rate.unwrap_or(44100);
@@ -291,7 +287,11 @@ impl AudioDecoder {
                                 *buf = SampleBuffer::<f32>::new(duration, spec);
                             }
                             buf.copy_interleaved_ref(decoded);
-                            return Ok(Some(buf.samples().to_vec()));
+                            let samples = buf.samples();
+                            if samples.is_empty() {
+                                continue;
+                            }
+                            return Ok(Some(samples.to_vec()));
                         }
                         Err(symphonia::core::errors::Error::DecodeError(_)) => {
                             // デコードパケット破損時はスキップして次を試行
@@ -555,6 +555,38 @@ mod tests {
         // シーク動作検証 (20秒位置へシークし、到着位置が概ね20秒であることを検証)
         let seek_res = decoder.seek(20.0).expect("Failed to seek in WebM");
         assert!((seek_res - 20.0).abs() < 5.0, "Expected seek position near 20s, got {:.3}s", seek_res);
+        let next_packet = decoder.next_interleaved_packet();
+        assert!(next_packet.unwrap().is_some());
+    }
+
+    #[test]
+    fn test_decode_mp4_opus_romeo_and_cinderella() {
+        let path = Path::new("sample/sample-movie/ロミオとシンデレラ  - doriko feat.初音ミク【official MV】.mp4");
+        if !path.exists() {
+            eprintln!("Skipping test: sample movie file not found");
+            return;
+        }
+
+        let mut decoder = AudioDecoder::open(path).expect("Failed to open MP4 (Opus) container with TrackNegotiationFsm");
+        let meta = decoder.metadata();
+        assert_eq!(meta.codec_name, "Opus");
+        assert_eq!(meta.channels, 2);
+        assert_eq!(meta.sample_rate, 48000);
+        assert!(meta.duration_secs.is_some());
+
+        // パケットデコード検証
+        let packet = decoder.next_interleaved_packet().expect("Failed to decode first packet");
+        assert!(packet.is_some());
+        let samples = packet.unwrap();
+        assert!(!samples.is_empty());
+        for &s in &samples {
+            assert!(!s.is_nan());
+            assert!(!s.is_infinite());
+        }
+
+        // シーク動作検証 (20秒位置)
+        let seek_res = decoder.seek(20.0).expect("Failed to seek in MP4 Opus");
+        assert!((seek_res - 20.0).abs() < 5.0, "Expected seek near 20s, got {:.3}s", seek_res);
         let next_packet = decoder.next_interleaved_packet();
         assert!(next_packet.unwrap().is_some());
     }
