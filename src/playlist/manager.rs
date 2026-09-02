@@ -180,6 +180,10 @@ impl PlaylistManager {
         &self.entries
     }
 
+    pub fn root_path(&self) -> Option<&Path> {
+        self.root_path.as_deref()
+    }
+
     pub fn selected_entry(&self) -> Option<&PlaylistEntry> {
         self.entries.get(self.cursor)
     }

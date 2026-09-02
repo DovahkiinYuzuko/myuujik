@@ -42,18 +42,31 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         config.audio.output_mode = "Exclusive".to_string();
     }
 
-    let target_path = args.path.or_else(|| {
-        config.session.last_opened_path.as_ref().map(PathBuf::from)
-    });
+    let (target_path, is_restored_session) = if let Some(path) = args.path {
+        (Some(path), false)
+    } else {
+        (config.session.last_opened_path.as_ref().map(PathBuf::from), true)
+    };
+
+    if !is_restored_session {
+        // 新規パスがCLI引数で指定された場合は、過去の曲復元位置をリセット
+        config.session.last_track_index = 0;
+        config.session.last_track_path = None;
+    }
+
+    if args.shuffle {
+        config.playback.shuffle = true;
+    }
 
     logger::info(
         "App",
         &format!(
-            "Mode: {}, Device: {}, Volume: {:.2}, Target: {:?}",
+            "Mode: {}, Device: {}, Volume: {:.2}, Target: {:?}, Restored: {}",
             config.audio.output_mode,
             config.audio.output_device,
             config.audio.volume,
-            target_path
+            target_path,
+            is_restored_session
         ),
     );
 

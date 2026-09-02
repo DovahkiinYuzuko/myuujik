@@ -56,7 +56,7 @@ pub struct PlaybackConfig {
 }
 
 fn default_repeat_mode() -> String {
-    "All".to_string()
+    "None".to_string()
 }
 fn default_shuffle() -> bool {
     false
@@ -79,6 +79,8 @@ pub struct UiConfig {
     pub theme: String,
     #[serde(default = "default_locale")]
     pub locale: String,
+    #[serde(default = "default_visualizer_mode")]
+    pub visualizer_mode: String, // "Type4" (Wave) or "Type3" (Meter)
 }
 
 fn default_image_protocol() -> String {
@@ -90,6 +92,9 @@ fn default_theme() -> String {
 fn default_locale() -> String {
     "ja".to_string()
 }
+fn default_visualizer_mode() -> String {
+    "Type4".to_string()
+}
 
 impl Default for UiConfig {
     fn default() -> Self {
@@ -97,6 +102,7 @@ impl Default for UiConfig {
             image_protocol: default_image_protocol(),
             theme: default_theme(),
             locale: default_locale(),
+            visualizer_mode: default_visualizer_mode(),
         }
     }
 }
@@ -106,6 +112,7 @@ pub struct SessionConfig {
     pub last_opened_path: Option<String>,
     #[serde(default)]
     pub last_track_index: usize,
+    pub last_track_path: Option<String>,
 }
 
 impl Default for AppConfig {
@@ -182,6 +189,8 @@ mod tests {
         assert_eq!(cfg, parsed);
         assert_eq!(parsed.audio.volume, 0.85);
         assert_eq!(parsed.ui.locale, "ja");
+        assert_eq!(parsed.ui.visualizer_mode, "Type4");
+        assert_eq!(parsed.session.last_track_path, None);
     }
 }
 

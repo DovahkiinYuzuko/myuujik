@@ -53,6 +53,7 @@ pub struct App {
     pub cursor_moved_at: Instant,
     pub track_changed_at: Instant,
     pub folder_picker_rx: Option<Receiver<Option<PathBuf>>>,
+    pub config: AppConfig,
 }
 
 impl App {
@@ -70,11 +71,22 @@ impl App {
         )?;
 
         let mut playlist = PlaylistManager::new();
+        match config.playback.repeat_mode.as_str() {
+            "None" | "Off" => playlist.set_repeat_mode(crate::playlist::RepeatMode::Off),
+            "Single" => playlist.set_repeat_mode(crate::playlist::RepeatMode::Single),
+            _ => playlist.set_repeat_mode(crate::playlist::RepeatMode::All),
+        }
+        playlist.set_shuffle(config.playback.shuffle);
+
         if let Some(path) = initial_path {
             playlist.load_path(path);
         }
 
         let available_devices = SharedBackend::list_devices();
+        let visualizer_mode = match config.ui.visualizer_mode.as_str() {
+            "Type3" => VisualizerMode::Type3,
+            _ => VisualizerMode::Type4,
+        };
 
         let mut app = Self {
             engine,
@@ -85,7 +97,7 @@ impl App {
             cover_widget: CoverArtWidget::new(),
             waveform_analyzer: WaveformAnalyzer::new(2048),
             waveform_points: vec![0.0; 48],
-            visualizer_mode: VisualizerMode::default(),
+            visualizer_mode,
             available_devices,
             device_modal_idx: 0,
             error_message: None,
@@ -104,10 +116,21 @@ impl App {
             cursor_moved_at: Instant::now(),
             track_changed_at: Instant::now(),
             folder_picker_rx: None,
+            config: config.clone(),
         };
 
-        // 初期曲があれば先頭曲を準備して再生開始
-        if let Some(track) = app.playlist.all_tracks().first().cloned() {
+        let target_track = if let Some(ref saved_path_str) = config.session.last_track_path {
+            let p = PathBuf::from(saved_path_str);
+            app.playlist.all_tracks().iter().find(|t| t.path == p).cloned()
+        } else {
+            None
+        }.or_else(|| {
+            app.playlist.all_tracks().get(config.session.last_track_index).cloned()
+        }).or_else(|| {
+            app.playlist.all_tracks().first().cloned()
+        });
+
+        if let Some(track) = target_track {
             app.playlist.select_and_play_path(&track.path);
             app.apply_track_playback(&track.path);
         }
@@ -269,6 +292,39 @@ impl App {
         }
     }
 
+    /// 現在の再生状態・設定を AppConfig に反映して保存する
+    pub fn save_session(&mut self) -> std::io::Result<()> {
+        self.config.audio.volume = self.engine.volume();
+        self.config.audio.output_mode = if self.is_exclusive {
+            "Exclusive".to_string()
+        } else {
+            "Shared".to_string()
+        };
+        self.config.playback.repeat_mode = match self.playlist.repeat_mode() {
+            crate::playlist::RepeatMode::Off => "None".to_string(),
+            crate::playlist::RepeatMode::All => "All".to_string(),
+            crate::playlist::RepeatMode::Single => "Single".to_string(),
+        };
+        self.config.playback.shuffle = self.playlist.is_shuffle();
+        self.config.ui.visualizer_mode = match self.visualizer_mode {
+            VisualizerMode::Type3 => "Type3".to_string(),
+            VisualizerMode::Type4 => "Type4".to_string(),
+        };
+
+        if let Some(root_path) = self.playlist.root_path() {
+            self.config.session.last_opened_path = Some(root_path.to_string_lossy().to_string());
+        }
+        self.config.session.last_track_index = self.playlist.cursor();
+        if let Some(entry) = self.playlist.selected_entry() {
+            if let Some(audio) = entry.audio_item() {
+                self.config.session.last_track_path = Some(audio.path.to_string_lossy().to_string());
+            }
+        }
+
+        crate::logger::info("App", &format!("Saving session config: {:?}", self.config.session));
+        self.config.save()
+    }
+
     pub fn increase_volume(&mut self) {
         let current_pct = (self.engine.volume() * 100.0).round() as i32;
         let next_pct = (current_pct + 5).clamp(0, 100);
@@ -308,6 +364,7 @@ impl App {
                     KeyCode::Enter => {
                         if let Some(dev) = self.available_devices.get(self.device_modal_idx) {
                             self.engine.send_command(crate::audio::engine::EngineCommand::SetOutputDevice(dev.name.clone())).ok();
+                            self.config.audio.output_device = dev.name.clone();
                         }
                         self.hfsm.close_modal();
                     }
@@ -825,6 +882,11 @@ impl App {
                     ModalState::None => {}
                 }
             })?;
+        }
+
+        // セッション・設定の自動保存
+        if let Err(e) = self.save_session() {
+            crate::logger::error("App", &format!("Failed to save session config: {}", e));
         }
 
         // 終了・端末復元
