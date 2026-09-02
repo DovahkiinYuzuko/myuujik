@@ -2,13 +2,13 @@
 name = "myuujik"
 version = "0.1.0"
 edition = "2021"
-authors = ["Yuzuko Underson <rikuichi0212@gmail.com>"]
 description = "High-quality, ultra-lightweight TUI audio player in Rust"
 license = "MIT"
 
 [dependencies]
 # Audio Decoding & Metadata
 symphonia = { version = "0.5", features = ["all"] }
+symphonia-adapter-libopus = "0.2"
 
 # Audio Output (Cross-platform Shared)
 cpal = "0.15"

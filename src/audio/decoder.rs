@@ -1,12 +1,23 @@
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::{Decoder, DecoderOptions, CODEC_TYPE_AAC, CODEC_TYPE_ALAC, CODEC_TYPE_FLAC, CODEC_TYPE_MP3, CODEC_TYPE_OPUS, CODEC_TYPE_PCM_F32LE, CODEC_TYPE_PCM_S16LE, CODEC_TYPE_PCM_S24LE, CODEC_TYPE_PCM_S32LE, CODEC_TYPE_VORBIS};
+use symphonia::core::codecs::{CodecRegistry, Decoder, DecoderOptions, CODEC_TYPE_AAC, CODEC_TYPE_ALAC, CODEC_TYPE_FLAC, CODEC_TYPE_MP3, CODEC_TYPE_OPUS, CODEC_TYPE_PCM_F32LE, CODEC_TYPE_PCM_S16LE, CODEC_TYPE_PCM_S24LE, CODEC_TYPE_PCM_S32LE, CODEC_TYPE_VORBIS};
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::{MetadataOptions, StandardTagKey, Tag, Value};
 use symphonia::core::probe::Hint;
-use symphonia::default::{get_codecs, get_probe};
+use symphonia::default::get_probe;
+use symphonia_adapter_libopus::OpusDecoder;
+
+fn get_registered_codecs() -> &'static CodecRegistry {
+    static REGISTRY: std::sync::OnceLock<CodecRegistry> = std::sync::OnceLock::new();
+    REGISTRY.get_or_init(|| {
+        let mut registry = CodecRegistry::new();
+        symphonia::default::register_enabled_codecs(&mut registry);
+        registry.register_all::<OpusDecoder>();
+        registry
+    })
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrackMetadata {
@@ -61,7 +72,7 @@ impl AudioDecoder {
             .tracks()
             .iter()
             .find_map(|t| {
-                get_codecs()
+                get_registered_codecs()
                     .make(&t.codec_params, &DecoderOptions::default())
                     .ok()
                     .map(|dec| (t.clone(), dec))
@@ -374,5 +385,33 @@ mod tests {
 
         // テスト用一時ファイルのクリーンアップ
         let _ = std::fs::remove_file(temp_mp4);
+    }
+
+    #[test]
+    fn test_decode_webm_opus_container_sample() {
+        let path = Path::new("sample/sample-movie/ジャイボール.webm");
+        if !path.exists() {
+            eprintln!("Skipping test: sample file not found");
+            return;
+        }
+
+        let mut decoder = AudioDecoder::open(path).expect("Failed to open WebM (Opus) container");
+        let meta = decoder.metadata();
+        assert!(meta.sample_rate > 0);
+        assert_eq!(meta.codec_name, "Opus");
+
+        // パケットデコード
+        let packet = decoder.next_interleaved_packet().expect("Failed to decode webm opus packet");
+        assert!(packet.is_some());
+        let samples = packet.unwrap();
+        assert!(!samples.is_empty());
+        for &s in &samples {
+            assert!(!s.is_nan());
+            assert!(!s.is_infinite());
+        }
+
+        // シーク動作検証
+        assert!(decoder.seek(2.0).is_ok());
+        assert!(decoder.next_interleaved_packet().unwrap().is_some());
     }
 }
