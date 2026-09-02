@@ -25,6 +25,7 @@ pub struct ControlsView<'a> {
     pub show_lyrics: bool,
     pub is_fetching_lyrics: bool,
     pub lyrics_toast: Option<&'a (String, std::time::Instant, bool)>,
+    pub next_queue_track: Option<&'a str>,
     pub i18n: &'a I18n,
     pub theme: &'a Theme,
 }
@@ -180,6 +181,13 @@ impl<'a> Widget for ControlsView<'a> {
             status_spans.push(Span::styled(
                 format!(" ✦ {} ", msg),
                 Style::default().fg(color).bg(Color::Rgb(25, 30, 45)).add_modifier(Modifier::BOLD),
+            ));
+        } else if let Some(next_title) = self.next_queue_track {
+            let label = self.i18n.t_args("queue.next_label", &[("track", next_title)]);
+            status_spans.push(Span::raw("  "));
+            status_spans.push(Span::styled(
+                format!(" ⮞ {} ", label),
+                Style::default().fg(Color::Rgb(245, 158, 11)).bg(Color::Rgb(35, 30, 20)).add_modifier(Modifier::BOLD),
             ));
         }
 

@@ -145,6 +145,16 @@ impl<'a> Widget for PlaylistView<'a> {
                     "    "
                 };
 
+                let q_pos = match entry {
+                    PlaylistEntry::AudioFile(item) => self.playlist.queue_position(&item.path),
+                    _ => None,
+                };
+                let q_badge_str = if let Some(pos) = q_pos {
+                    format!("[Q{}] ", pos)
+                } else {
+                    String::new()
+                };
+
                 let (badge_str, badge_color): (String, Color) = match entry {
                     PlaylistEntry::ParentDir => ("[UP] ".to_string(), Color::Rgb(192, 132, 252)),
                     PlaylistEntry::Directory { .. } => ("[DIR] ".to_string(), Color::Rgb(251, 191, 36)),
@@ -167,8 +177,8 @@ impl<'a> Widget for PlaylistView<'a> {
 
                 let raw_name = entry.display_name();
 
-                // プレフィックス＋バッジのセル幅
-                let fixed_width = str_width(prefix) + str_width(&badge_str);
+                // プレフィックス＋予約バッジ＋拡張子バッジのセル幅
+                let fixed_width = str_width(prefix) + str_width(&q_badge_str) + str_width(&badge_str);
                 let available_name_width = (chunks[1].width as usize).saturating_sub(fixed_width + 1);
 
                 // カーソル行なら電光掲示板マーキースクロール、それ以外は枠幅カット
@@ -178,7 +188,7 @@ impl<'a> Widget for PlaylistView<'a> {
                     take_cells(raw_name, available_name_width)
                 };
 
-                let line = Line::from(vec![
+                let mut spans = vec![
                     Span::styled(
                         prefix,
                         if is_cursor {
@@ -189,23 +199,36 @@ impl<'a> Widget for PlaylistView<'a> {
                             Style::default().fg(self.theme.text_secondary)
                         },
                     ),
-                    Span::styled(
-                        badge_str,
-                        Style::default().fg(badge_color).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        display_name,
-                        if is_cursor {
-                            Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
-                        } else if is_playing {
-                            Style::default().fg(self.theme.accent_playing).add_modifier(Modifier::BOLD)
-                        } else if matches!(entry, PlaylistEntry::Directory { .. }) {
-                            Style::default().fg(Color::Rgb(251, 191, 36))
-                        } else {
-                            Style::default().fg(self.theme.text_primary)
-                        },
-                    ),
-                ]);
+                ];
+
+                if !q_badge_str.is_empty() {
+                    spans.push(Span::styled(
+                        q_badge_str,
+                        Style::default()
+                            .fg(Color::Rgb(245, 158, 11))
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                }
+
+                spans.push(Span::styled(
+                    badge_str,
+                    Style::default().fg(badge_color).add_modifier(Modifier::BOLD),
+                ));
+
+                spans.push(Span::styled(
+                    display_name,
+                    if is_cursor {
+                        Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                    } else if is_playing {
+                        Style::default().fg(self.theme.accent_playing).add_modifier(Modifier::BOLD)
+                    } else if matches!(entry, PlaylistEntry::Directory { .. }) {
+                        Style::default().fg(Color::Rgb(251, 191, 36))
+                    } else {
+                        Style::default().fg(self.theme.text_primary)
+                    },
+                ));
+
+                let line = Line::from(spans);
 
                 let item_style = if is_cursor {
                     Style::default().bg(self.theme.primary).fg(Color::White)

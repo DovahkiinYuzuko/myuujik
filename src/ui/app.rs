@@ -638,6 +638,26 @@ impl App {
             KeyCode::Char('D') => {
                 self.delete_current_lyrics();
             }
+            KeyCode::Char('a') | KeyCode::Char('A') => {
+                if let Some(entry) = self.playlist.selected_entry().cloned() {
+                    if let Some(audio) = entry.audio_item() {
+                        let path = audio.path.clone();
+                        let display_name = audio.display_name.clone();
+                        let (added, pos) = self.playlist.toggle_queue(path);
+                        let msg = if added {
+                            self.i18n.t_args("queue.added", &[
+                                ("pos", &pos.to_string()),
+                                ("track", &display_name),
+                            ])
+                        } else {
+                            self.i18n.t_args("queue.removed", &[
+                                ("track", &display_name),
+                            ])
+                        };
+                        self.lyrics_toast = Some((msg, Instant::now(), false));
+                    }
+                }
+            }
             KeyCode::Char('?') | KeyCode::Char('h') => {
                 self.hfsm.open_modal(ModalState::Help);
             }
@@ -1012,6 +1032,10 @@ impl App {
                     self.engine.current_position_secs()
                 };
 
+                let next_queue_title = self.playlist.peek_queue().and_then(|path| {
+                    self.playlist.all_tracks().iter().find(|t| &t.path == path).map(|t| t.display_name.as_str())
+                });
+
                 let controls_view = ControlsView {
                     playback_state: &self.engine.current_state(),
                     current_position_secs: cur_secs,
@@ -1026,6 +1050,7 @@ impl App {
                     show_lyrics: self.show_lyrics,
                     is_fetching_lyrics: self.lyrics_fetch_rx.is_some(),
                     lyrics_toast: self.lyrics_toast.as_ref(),
+                    next_queue_track: next_queue_title,
                     i18n: &self.i18n,
                     theme: &self.theme,
                 };

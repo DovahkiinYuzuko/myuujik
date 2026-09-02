@@ -2,6 +2,7 @@ use crate::playlist::item::{PlaylistEntry, PlaylistItem};
 use crate::playlist::scanner::AudioScanner;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +28,7 @@ pub struct PlaylistManager {
     shuffle_pos: usize,
     filter_query: Option<String>,
     filtered_entries: Vec<PlaylistEntry>,
+    queue: VecDeque<PathBuf>,
 }
 
 impl PlaylistManager {
@@ -46,6 +48,7 @@ impl PlaylistManager {
             shuffle_pos: 0,
             filter_query: None,
             filtered_entries: Vec::new(),
+            queue: VecDeque::new(),
         }
     }
 
@@ -358,9 +361,56 @@ impl PlaylistManager {
         None
     }
 
+    pub fn enqueue(&mut self, path: PathBuf) {
+        let canonical = std::fs::canonicalize(&path).unwrap_or(path);
+        if !self.queue.contains(&canonical) {
+            self.queue.push_back(canonical);
+        }
+    }
+
+    pub fn dequeue(&mut self) -> Option<PathBuf> {
+        self.queue.pop_front()
+    }
+
+    pub fn toggle_queue(&mut self, path: PathBuf) -> (bool, usize) {
+        let canonical = std::fs::canonicalize(&path).unwrap_or(path);
+        if let Some(pos) = self.queue.iter().position(|p| p == &canonical) {
+            self.queue.remove(pos);
+            (false, 0)
+        } else {
+            self.queue.push_back(canonical);
+            let len = self.queue.len();
+            (true, len)
+        }
+    }
+
+    pub fn queue_position(&self, path: &Path) -> Option<usize> {
+        let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        self.queue.iter().position(|p| p == &canonical).map(|pos| pos + 1)
+    }
+
+    pub fn queue(&self) -> &VecDeque<PathBuf> {
+        &self.queue
+    }
+
+    pub fn clear_queue(&mut self) {
+        self.queue.clear();
+    }
+
+    pub fn peek_queue(&self) -> Option<&PathBuf> {
+        self.queue.front()
+    }
+
     pub fn next_track(&mut self) -> Option<&PlaylistItem> {
         if self.all_tracks.is_empty() {
             return None;
+        }
+
+        // 再生予約キューが存在する場合、最優先でデキューして再生
+        while let Some(queue_path) = self.queue.pop_front() {
+            if self.all_tracks.iter().any(|t| t.path == queue_path) {
+                return self.select_and_play_path(&queue_path);
+            }
         }
 
         if self.repeat_mode == RepeatMode::Single {
@@ -656,5 +706,47 @@ mod tests {
         pm.clear_filter();
         assert!(!pm.is_filtered());
         assert_eq!(pm.filter_query(), None);
+    }
+
+    #[test]
+    fn test_playlist_queue_management_and_priority_playback() {
+        let mut pm = PlaylistManager::new();
+        let count = pm.load_path("sample");
+        assert!(count >= 3);
+
+        let tracks = pm.all_tracks().to_vec();
+        let t0 = tracks[0].path.clone();
+        let t1 = tracks[1].path.clone();
+        let t2 = tracks[2].path.clone();
+
+        // 1. キューへの追加・トグル
+        assert_eq!(pm.queue_position(&t1), None);
+        let (added, pos) = pm.toggle_queue(t1.clone());
+        assert!(added);
+        assert_eq!(pos, 1);
+        assert_eq!(pm.queue_position(&t1), Some(1));
+
+        let (added, pos) = pm.toggle_queue(t2.clone());
+        assert!(added);
+        assert_eq!(pos, 2);
+        assert_eq!(pm.queue_position(&t2), Some(2));
+
+        // 2. トグル解除
+        let (added, pos) = pm.toggle_queue(t1.clone());
+        assert!(!added);
+        assert_eq!(pos, 0);
+        assert_eq!(pm.queue_position(&t1), None);
+        // t2 が先頭に繰り上がり
+        assert_eq!(pm.queue_position(&t2), Some(1));
+
+        // 3. 優先割り込み再生
+        // t0 を再生中に設定
+        pm.select_and_play_path(&t0);
+        assert_eq!(pm.current_track_path(), Some(&t0));
+
+        // 通常であれば次は tracks[1] だが、キューに t2 があるため t2 が最優先再生される
+        let next = pm.next_track().expect("Next track should exist");
+        assert_eq!(next.path, t2);
+        assert_eq!(pm.queue_position(&t2), None); // キューから消費済み
     }
 }

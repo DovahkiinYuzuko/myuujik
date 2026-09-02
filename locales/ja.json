@@ -99,6 +99,7 @@
     "visualizer": "ビジュアライザ切替",
     "fetch_lyrics": "歌詞自動取得",
     "delete_lyrics": "歌詞ファイル削除",
+    "queue": "再生予約キュー追加/解除",
     "parent_dir": "親フォルダに戻る",
     "help": "ヘルプ表示",
     "quit": "終了"
@@ -118,6 +119,7 @@
     "mode": "e: 出力モード切替",
     "lyrics": "l: 歌詞/波形切替",
     "fetch_lyrics": "d: 歌詞取得 / D: 歌詞削除",
+    "queue": "a: 再生予約キュー追加/解除",
     "quit": "q / Esc: 終了"
   },
   "lyrics": {
@@ -129,6 +131,11 @@
     "fetch_failed": "歌詞の取得に失敗しました: {error}",
     "deleted": "歌詞ファイルを削除しました",
     "delete_failed": "歌詞の削除に失敗しました: {error}"
+  },
+  "queue": {
+    "added": "再生予約に追加しました: [Q{pos}] {track}",
+    "removed": "再生予約から解除しました: {track}",
+    "next_label": "NEXT: [Q1] {track}"
   },
   "errors": {
     "exclusive_failed": "排他モードの初期化に失敗しました。Sharedモードで再生します。",

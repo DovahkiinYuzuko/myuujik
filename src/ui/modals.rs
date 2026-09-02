@@ -88,6 +88,7 @@ impl<'a> Widget for HelpModal<'a> {
             ("v", self.i18n.t("shortcuts.visualizer")),
             ("d", self.i18n.t("shortcuts.fetch_lyrics")),
             ("Shift+D", self.i18n.t("shortcuts.delete_lyrics")),
+            ("a", self.i18n.t("shortcuts.queue")),
             ("r", self.i18n.t("shortcuts.repeat")),
             ("s", self.i18n.t("shortcuts.shuffle")),
             ("e", self.i18n.t("shortcuts.exclusive")),

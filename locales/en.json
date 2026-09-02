@@ -99,6 +99,7 @@
     "visualizer": "Toggle Visualizer",
     "fetch_lyrics": "Auto-fetch Lyrics",
     "delete_lyrics": "Delete Lyrics File",
+    "queue": "Add/Remove Playback Queue",
     "parent_dir": "Go to Parent Folder",
     "help": "Help",
     "quit": "Quit"
@@ -118,6 +119,7 @@
     "mode": "e: Output Mode",
     "lyrics": "l: Toggle Lyrics/Waveform",
     "fetch_lyrics": "d: Fetch / D: Delete Lyrics",
+    "queue": "a: Add/Remove Playback Queue",
     "quit": "q / Esc: Quit"
   },
   "lyrics": {
@@ -129,6 +131,11 @@
     "fetch_failed": "Failed to fetch lyrics: {error}",
     "deleted": "Lyrics file deleted",
     "delete_failed": "Failed to delete lyrics file: {error}"
+  },
+  "queue": {
+    "added": "Added to playback queue: [Q{pos}] {track}",
+    "removed": "Removed from playback queue: {track}",
+    "next_label": "NEXT: [Q1] {track}"
   },
   "errors": {
     "exclusive_failed": "Failed to initialize Exclusive mode. Falling back to Shared mode.",
