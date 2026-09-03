@@ -9,7 +9,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, Borders, Clear, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation,
-    ScrollbarState, Widget,
+    ScrollbarState, Widget, Wrap,
 };
 
 pub struct DeviceSelectModal<'a> {
@@ -200,7 +200,9 @@ impl<'a> Widget for ErrorModal<'a> {
             )),
         ];
 
-        let para = Paragraph::new(lines).style(Style::default().bg(self.theme.bg_card));
+        let para = Paragraph::new(lines)
+            .style(Style::default().bg(self.theme.bg_card))
+            .wrap(Wrap { trim: true });
         para.render(inner_area, buf);
     }
 }
@@ -457,7 +459,8 @@ impl<'a> Widget for FavoritesHistoryModal<'a> {
                         format!("\n  {}", empty_text),
                         Style::default().fg(self.theme.text_secondary),
                     )))
-                    .style(Style::default().bg(self.theme.bg_card));
+                    .style(Style::default().bg(self.theme.bg_card))
+                    .wrap(Wrap { trim: true });
                     p.render(chunks[1], buf);
                 } else {
                     let items: Vec<ListItem> = self
@@ -491,7 +494,6 @@ impl<'a> Widget for FavoritesHistoryModal<'a> {
                             ListItem::new(line).style(item_style)
                         })
                         .collect();
-
                     let list = List::new(items).style(Style::default().bg(self.theme.bg_card));
                     list.render(chunks[1], buf);
                 }
@@ -503,7 +505,8 @@ impl<'a> Widget for FavoritesHistoryModal<'a> {
                         format!("\n  {}", empty_text),
                         Style::default().fg(self.theme.text_secondary),
                     )))
-                    .style(Style::default().bg(self.theme.bg_card));
+                    .style(Style::default().bg(self.theme.bg_card))
+                    .wrap(Wrap { trim: true });
                     p.render(chunks[1], buf);
                 } else {
                     let items: Vec<ListItem> = self
@@ -595,7 +598,8 @@ impl<'a> Widget for PlaylistManagerModal<'a> {
         if self.playlists.is_empty() {
             let empty_text = format!("\n  {}", self.i18n.t("custom_playlist.empty"));
             let empty_para = Paragraph::new(empty_text)
-                .style(Style::default().fg(self.theme.text_secondary).bg(self.theme.bg_card));
+                .style(Style::default().fg(self.theme.text_secondary).bg(self.theme.bg_card))
+                .wrap(Wrap { trim: true });
             empty_para.render(chunks[0], buf);
         } else {
             let items: Vec<ListItem> = self

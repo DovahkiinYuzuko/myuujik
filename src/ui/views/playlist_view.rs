@@ -7,7 +7,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Widget};
+use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Widget, Wrap};
 
 use crate::playlist::LibraryManager;
 
@@ -97,12 +97,10 @@ impl<'a> Widget for PlaylistView<'a> {
             } else {
                 self.i18n.t("playlist.empty")
             };
-            let empty_msg = Line::from(Span::styled(
-                format!("  {}", msg),
-                Style::default().fg(self.theme.text_secondary).bg(self.theme.bg_card),
-            ));
-            let list = List::new(vec![ListItem::new(empty_msg)]).style(Style::default().bg(self.theme.bg_card));
-            list.render(chunks[1], buf);
+            let empty_para = Paragraph::new(format!("  {}", msg))
+                .style(Style::default().fg(self.theme.text_secondary).bg(self.theme.bg_card))
+                .wrap(Wrap { trim: true });
+            empty_para.render(chunks[1], buf);
             return;
         }
 
