@@ -61,6 +61,9 @@ impl I18n {
     /// 次のロケールへ順繰りに切り替え、新しいロケール識別子を返す
     pub fn switch_to_next_locale(&mut self) -> String {
         let locales = self.available_locales();
+        if locales.is_empty() {
+            return self.current_locale.clone();
+        }
         let current_idx = locales.iter().position(|l| l == &self.current_locale).unwrap_or(0);
         let next_idx = (current_idx + 1) % locales.len();
         let next_locale = locales[next_idx].clone();

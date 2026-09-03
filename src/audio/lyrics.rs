@@ -99,7 +99,11 @@ fn parse_timestamp(tag: &str) -> Option<u64> {
     let (seconds, millis) = if sec_parts.len() == 2 {
         let secs: u64 = sec_parts[0].trim().parse().ok()?;
         let frac_str = sec_parts[1].trim();
+        if !frac_str.chars().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
         let ms: u64 = match frac_str.len() {
+            0 => 0,
             1 => frac_str.parse::<u64>().ok()? * 100,
             2 => frac_str.parse::<u64>().ok()? * 10,
             3 => frac_str.parse::<u64>().ok()?,

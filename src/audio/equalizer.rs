@@ -27,8 +27,8 @@ impl BiquadFilter {
 
     /// ピーキングEQフィルタ係数を計算してリセットまたは更新
     pub fn update_peaking(&mut self, f0: f32, q: f32, gain_db: f32, sample_rate: f32) {
-        // ナイキスト周波数を超える場合はパススルー（フラット）
-        if f0 >= sample_rate * 0.49 || sample_rate <= 0.0 {
+        // ナイキスト周波数を超える場合、無効なサンプルレート、またはNaN/Infの場合はパススルー（フラット）
+        if !sample_rate.is_finite() || sample_rate <= 0.0 || !f0.is_finite() || f0 >= sample_rate * 0.49 || !gain_db.is_finite() {
             self.b0 = 1.0;
             self.b1 = 0.0;
             self.b2 = 0.0;
@@ -68,13 +68,17 @@ impl BiquadFilter {
         self.a2 = (a2 * inv_a0) as f32;
     }
 
-    /// Direct Form 2 Transposed (DF2T) による 1 サンプル処理
+    /// Direct Form 2 Transposed (DF2T) による 1 サンプル処理（NaN/Inf自動回復保護付き）
     #[inline]
     pub fn process(&mut self, x: f32) -> f32 {
-        let y = self.b0 * x + self.s1;
-        self.s1 = self.b1 * x - self.a1 * y + self.s2;
-        self.s2 = self.b2 * x - self.a2 * y;
-        y
+        let clean_x = if x.is_finite() { x } else { 0.0 };
+        let y = self.b0 * clean_x + self.s1;
+        let clean_y = if y.is_finite() { y } else { 0.0 };
+        let s1_next = self.b1 * clean_x - self.a1 * clean_y + self.s2;
+        let s2_next = self.b2 * clean_x - self.a2 * clean_y;
+        self.s1 = if s1_next.is_finite() { s1_next } else { 0.0 };
+        self.s2 = if s2_next.is_finite() { s2_next } else { 0.0 };
+        clean_y
     }
 
     /// ディレイ状態のクリア
@@ -213,7 +217,11 @@ impl Equalizer {
         if band_idx >= EQ_BAND_COUNT {
             return;
         }
-        let clamped_gain = gain_db.clamp(-12.0, 12.0);
+        let clamped_gain = if gain_db.is_nan() || !gain_db.is_finite() {
+            0.0
+        } else {
+            gain_db.clamp(-12.0, 12.0)
+        };
         self.gains[band_idx] = clamped_gain;
 
         const Q: f32 = 1.414;
