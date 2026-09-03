@@ -1,5 +1,7 @@
 use crate::audio::traits::AudioDeviceInfo;
+use crate::fsm::FavoritesHistoryTab;
 use crate::i18n::I18n;
+use crate::playlist::{FavoriteTrack, HistoryItem};
 use crate::ui::theme::Theme;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -93,6 +95,8 @@ impl<'a> Widget for HelpModal<'a> {
             ("r", self.i18n.t("shortcuts.repeat")),
             ("s", self.i18n.t("shortcuts.shuffle")),
             ("Shift+S", self.i18n.t("shortcuts.export_playlist")),
+            ("f", self.i18n.t("help.fav_toggle")),
+            ("Shift+F", self.i18n.t("help.fav_history_modal")),
             ("e", self.i18n.t("shortcuts.exclusive")),
             ("E", self.i18n.t("shortcuts.devices")),
             ("g", self.i18n.t("shortcuts.equalizer")),
@@ -355,4 +359,177 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+
+pub struct FavoritesHistoryModal<'a> {
+    pub tab: FavoritesHistoryTab,
+    pub selected_idx: usize,
+    pub favorites: &'a [FavoriteTrack],
+    pub history: &'a [HistoryItem],
+    pub i18n: &'a I18n,
+    pub theme: &'a Theme,
+}
+
+impl<'a> Widget for FavoritesHistoryModal<'a> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let modal_area = centered_rect(75, 75, area);
+        Clear.render(modal_area, buf);
+
+        let title = format!(" [ {} ] ", self.i18n.t("library.modal_title"));
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(self.theme.primary))
+            .style(Style::default().bg(self.theme.bg_card))
+            .title(Span::styled(title, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)));
+
+        let inner_area = block.inner(modal_area);
+        block.render(modal_area, buf);
+
+        if inner_area.height < 4 {
+            return;
+        }
+
+        // 上部: タブバー (1行)
+        // 中央: アイテムリスト (可変)
+        // 下部: 操作ガイド (1行)
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1), // タブ
+                Constraint::Min(1),    // リスト
+                Constraint::Length(1), // フッターガイド
+            ])
+            .split(inner_area);
+
+        // 1. タブバー
+        let fav_tab_title = self.i18n.t_args("library.tab_favorites", &[("count", &self.favorites.len().to_string())]);
+        let hist_tab_title = self.i18n.t_args("library.tab_history", &[("count", &self.history.len().to_string())]);
+
+        let (fav_style, hist_style) = match self.tab {
+            FavoritesHistoryTab::Favorites => (
+                Style::default().bg(self.theme.primary).fg(Color::White).add_modifier(Modifier::BOLD),
+                Style::default().bg(self.theme.bg_card).fg(self.theme.text_secondary),
+            ),
+            FavoritesHistoryTab::History => (
+                Style::default().bg(self.theme.bg_card).fg(self.theme.text_secondary),
+                Style::default().bg(self.theme.primary).fg(Color::White).add_modifier(Modifier::BOLD),
+            ),
+        };
+
+        let tabs_line = Line::from(vec![
+            Span::styled(format!("  {}  ", fav_tab_title), fav_style),
+            Span::styled("   ", Style::default().bg(self.theme.bg_card)),
+            Span::styled(format!("  {}  ", hist_tab_title), hist_style),
+        ]);
+        Paragraph::new(tabs_line).style(Style::default().bg(self.theme.bg_card)).render(chunks[0], buf);
+
+        // 2. リスト本体
+        match self.tab {
+            FavoritesHistoryTab::Favorites => {
+                if self.favorites.is_empty() {
+                    let empty_text = self.i18n.t("library.favorites_empty");
+                    let p = Paragraph::new(Line::from(Span::styled(
+                        format!("\n  {}", empty_text),
+                        Style::default().fg(self.theme.text_secondary),
+                    )))
+                    .style(Style::default().bg(self.theme.bg_card));
+                    p.render(chunks[1], buf);
+                } else {
+                    let items: Vec<ListItem> = self
+                        .favorites
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, fav)| {
+                            let is_sel = idx == self.selected_idx;
+                            let prefix = if is_sel { " ▶ " } else { "   " };
+                            let (y, m, d, h, min, _) = crate::logger::epoch_secs_to_utc_ymd(fav.added_at);
+                            let time_str = format!("{:04}-{:02}-{:02} {:02}:{:02}", y, m, d, h, min);
+
+                            let line = Line::from(vec![
+                                Span::styled(prefix, if is_sel { Style::default().fg(Color::White).add_modifier(Modifier::BOLD) } else { Style::default().fg(self.theme.text_secondary) }),
+                                Span::styled("★ ", Style::default().fg(Color::Rgb(251, 191, 36)).add_modifier(Modifier::BOLD)),
+                                Span::styled(
+                                    format!("{:<40}", fav.display_name),
+                                    if is_sel { Style::default().fg(Color::White).add_modifier(Modifier::BOLD) } else { Style::default().fg(self.theme.text_primary) },
+                                ),
+                                Span::styled(
+                                    format!("  [{}]", time_str),
+                                    Style::default().fg(self.theme.text_secondary),
+                                ),
+                            ]);
+
+                            let item_style = if is_sel {
+                                Style::default().bg(self.theme.primary).fg(Color::White)
+                            } else {
+                                Style::default().bg(self.theme.bg_card)
+                            };
+                            ListItem::new(line).style(item_style)
+                        })
+                        .collect();
+
+                    let list = List::new(items).style(Style::default().bg(self.theme.bg_card));
+                    list.render(chunks[1], buf);
+                }
+            }
+            FavoritesHistoryTab::History => {
+                if self.history.is_empty() {
+                    let empty_text = self.i18n.t("library.history_empty");
+                    let p = Paragraph::new(Line::from(Span::styled(
+                        format!("\n  {}", empty_text),
+                        Style::default().fg(self.theme.text_secondary),
+                    )))
+                    .style(Style::default().bg(self.theme.bg_card));
+                    p.render(chunks[1], buf);
+                } else {
+                    let items: Vec<ListItem> = self
+                        .history
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, item)| {
+                            let is_sel = idx == self.selected_idx;
+                            let prefix = if is_sel { " ▶ " } else { "   " };
+                            let (y, m, d, h, min, _) = crate::logger::epoch_secs_to_utc_ymd(item.played_at);
+                            let time_str = format!("{:04}-{:02}-{:02} {:02}:{:02}", y, m, d, h, min);
+
+                            let line = Line::from(vec![
+                                Span::styled(prefix, if is_sel { Style::default().fg(Color::White).add_modifier(Modifier::BOLD) } else { Style::default().fg(self.theme.text_secondary) }),
+                                Span::styled("⏱ ", Style::default().fg(Color::Rgb(56, 189, 248))),
+                                Span::styled(
+                                    format!("{:<40}", item.display_name),
+                                    if is_sel { Style::default().fg(Color::White).add_modifier(Modifier::BOLD) } else { Style::default().fg(self.theme.text_primary) },
+                                ),
+                                Span::styled(
+                                    format!("  [{}] ({}x)", time_str, item.play_count),
+                                    Style::default().fg(self.theme.text_secondary),
+                                ),
+                            ]);
+
+                            let item_style = if is_sel {
+                                Style::default().bg(self.theme.primary).fg(Color::White)
+                            } else {
+                                Style::default().bg(self.theme.bg_card)
+                            };
+                            ListItem::new(line).style(item_style)
+                        })
+                        .collect();
+
+                    let list = List::new(items).style(Style::default().bg(self.theme.bg_card));
+                    list.render(chunks[1], buf);
+                }
+            }
+        }
+
+        // 3. フッターガイド
+        let footer_line = Line::from(vec![
+            Span::styled(" [Enter] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{}  ", self.i18n.t("library.action_play")), Style::default().fg(self.theme.text_primary)),
+            Span::styled("[Tab] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{}  ", self.i18n.t("library.action_tab")), Style::default().fg(self.theme.text_primary)),
+            Span::styled("[d] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{}  ", self.i18n.t("library.action_delete")), Style::default().fg(self.theme.text_primary)),
+            Span::styled("[Esc] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
+            Span::styled(self.i18n.t("library.action_close"), Style::default().fg(self.theme.text_primary)),
+        ]);
+        Paragraph::new(footer_line).render(chunks[2], buf);
+    }
 }

@@ -9,8 +9,11 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Widget};
 
+use crate::playlist::LibraryManager;
+
 pub struct PlaylistView<'a> {
     pub playlist: &'a PlaylistManager,
+    pub library: &'a LibraryManager,
     pub is_focused: bool,
     pub i18n: &'a I18n,
     pub theme: &'a Theme,
@@ -175,10 +178,16 @@ impl<'a> Widget for PlaylistView<'a> {
                     }
                 };
 
+                let is_fav = match entry {
+                    PlaylistEntry::AudioFile(item) => self.library.is_favorite(&item.path),
+                    _ => false,
+                };
+                let fav_width = if is_fav { 3 } else { 0 };
+
                 let raw_name = entry.display_name();
 
-                // プレフィックス＋予約バッジ＋拡張子バッジのセル幅
-                let fixed_width = str_width(prefix) + str_width(&q_badge_str) + str_width(&badge_str);
+                // プレフィックス＋予約バッジ＋拡張子バッジ＋お気に入りバッジのセル幅
+                let fixed_width = str_width(prefix) + str_width(&q_badge_str) + str_width(&badge_str) + fav_width;
                 let available_name_width = (chunks[1].width as usize).saturating_sub(fixed_width + 1);
 
                 // カーソル行なら電光掲示板マーキースクロール、それ以外は枠幅カット
@@ -214,6 +223,15 @@ impl<'a> Widget for PlaylistView<'a> {
                     badge_str,
                     Style::default().fg(badge_color).add_modifier(Modifier::BOLD),
                 ));
+
+                if is_fav {
+                    spans.push(Span::styled(
+                        "★ ",
+                        Style::default()
+                            .fg(Color::Rgb(251, 191, 36))
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                }
 
                 spans.push(Span::styled(
                     display_name,

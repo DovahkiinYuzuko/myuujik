@@ -139,7 +139,25 @@
     "queue": "a: Add/Remove Playback Queue",
     "export_playlist": "S: Export Playlist (.m3u8)",
     "reorder_track": "Alt+↑/↓: Reorder Track",
+    "fav_toggle": "f: Toggle Favorite",
+    "fav_history_modal": "F: Favorites & History Modal",
     "quit": "q / Esc: Quit"
+  },
+  "library": {
+    "fav_added": "★ Added to Favorites: {track}",
+    "fav_removed": "☆ Removed from Favorites: {track}",
+    "modal_title": "Library (Favorites & Playback History)",
+    "tab_favorites": "★ Favorites ({count})",
+    "tab_history": "⏱ History ({count})",
+    "favorites_empty": "No favorite tracks yet (Press 'f' to add)",
+    "history_empty": "No playback history yet",
+    "item_count": "{current}/{total}",
+    "added_at": "Added: {time}",
+    "played_at": "Played: {time} ({plays} plays)",
+    "action_play": "Enter: Play",
+    "action_delete": "d: Remove",
+    "action_tab": "Tab: Switch Tab",
+    "action_close": "Esc: Close"
   },
   "lyrics": {
     "title": "Lyrics",

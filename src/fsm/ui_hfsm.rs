@@ -5,6 +5,12 @@ pub enum UiPane {
     Controls,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FavoritesHistoryTab {
+    Favorites,
+    History,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModalState {
     None,
@@ -12,6 +18,7 @@ pub enum ModalState {
     ErrorAlert { message: String },
     Help,
     Equalizer { selected_band: usize },
+    FavoritesHistory { tab: FavoritesHistoryTab, selected_index: usize },
 }
 
 #[derive(Debug, Clone)]

@@ -139,7 +139,25 @@
     "queue": "a: 再生予約キュー追加/解除",
     "export_playlist": "S: プレイリスト保存 (.m3u8)",
     "reorder_track": "Alt+↑/↓: 選択曲を上下に並び替え",
+    "fav_toggle": "f: 選択曲のお気に入り登録/解除",
+    "fav_history_modal": "F: お気に入り & 再生履歴一覧",
     "quit": "q / Esc: 終了"
+  },
+  "library": {
+    "fav_added": "★ お気に入りに追加しました: {track}",
+    "fav_removed": "☆ お気に入りから解除しました: {track}",
+    "modal_title": "ライブラリ (お気に入り & 再生履歴)",
+    "tab_favorites": "★ お気に入り ({count})",
+    "tab_history": "⏱ 再生履歴 ({count})",
+    "favorites_empty": "お気に入りに登録された楽曲はありません ('f' キーで追加)",
+    "history_empty": "再生履歴はありません",
+    "item_count": "{current}/{total}",
+    "added_at": "追加日時: {time}",
+    "played_at": "再生日時: {time} (再生回数: {plays}回)",
+    "action_play": "Enter: 再生",
+    "action_delete": "d: 削除",
+    "action_tab": "Tab: タブ切替",
+    "action_close": "Esc: 閉じる"
   },
   "lyrics": {
     "title": "歌詞",

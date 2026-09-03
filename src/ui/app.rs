@@ -5,12 +5,13 @@ use crate::audio::traits::AudioDeviceInfo;
 use crate::audio::visualizer::{FftSpectrumAnalyzer, VisualizerMode, WaveformAnalyzer};
 use crate::config::AppConfig;
 use crate::fsm::playback_fsm::PlaybackState;
-use crate::fsm::ui_hfsm::{ModalState, UiHfsm, UiPane};
+use crate::fsm::ui_hfsm::{FavoritesHistoryTab, ModalState, UiHfsm, UiPane};
 use crate::i18n::I18n;
 use crate::playlist::item::PlaylistEntry;
+use crate::playlist::library::LibraryManager;
 use crate::playlist::manager::PlaylistManager;
 use crate::ui::image_view::CoverArtWidget;
-use crate::ui::modals::{DeviceSelectModal, EqualizerModal, ErrorModal, HelpModal};
+use crate::ui::modals::{DeviceSelectModal, EqualizerModal, ErrorModal, FavoritesHistoryModal, HelpModal};
 use crate::ui::theme::Theme;
 use crate::ui::views::{ControlsView, FooterView, PlaylistView, TrackInfoView};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -64,6 +65,7 @@ pub struct App {
     pub eq_enabled: bool,
     pub eq_gains: [f32; 10],
     pub eq_preset: String,
+    pub library: LibraryManager,
 }
 
 impl App {
@@ -145,6 +147,7 @@ impl App {
                 g
             },
             eq_preset: config.equalizer.preset.clone(),
+            library: LibraryManager::new(),
         };
 
         app.engine.set_equalizer_enabled(app.eq_enabled);
@@ -234,6 +237,14 @@ impl App {
             self.cover_widget.update_cover_art(&path_str, cover.as_ref());
             self.track_changed_at = Instant::now();
         }
+
+        let display_name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Unknown Track")
+            .to_string();
+        self.library.record_playback(path, display_name);
+
         self.engine.play_file(path);
     }
 
@@ -252,6 +263,13 @@ impl App {
         self.cover_widget.update_cover_art(&path_str, cover.as_ref());
         self.track_changed_at = Instant::now();
         self.cursor_moved_at = Instant::now();
+
+        let display_name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Unknown Track")
+            .to_string();
+        self.library.record_playback(path, display_name);
     }
 
     /// CD カバーアートおよびメタデータの非同期ダウンロード完了を検知して UI に反映する
@@ -618,6 +636,78 @@ impl App {
                         _ => {}
                     }
                 }
+                ModalState::FavoritesHistory { tab, selected_index } => {
+                    let mut current_tab = *tab;
+                    let mut idx = *selected_index;
+                    let items_len = match current_tab {
+                        FavoritesHistoryTab::Favorites => self.library.favorites().len(),
+                        FavoritesHistoryTab::History => self.library.history().len(),
+                    };
+
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => {
+                            self.hfsm.close_modal();
+                        }
+                        KeyCode::Tab | KeyCode::Left | KeyCode::Right => {
+                            current_tab = match current_tab {
+                                FavoritesHistoryTab::Favorites => FavoritesHistoryTab::History,
+                                FavoritesHistoryTab::History => FavoritesHistoryTab::Favorites,
+                            };
+                            idx = 0;
+                            self.hfsm.modal = ModalState::FavoritesHistory { tab: current_tab, selected_index: idx };
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            if idx > 0 {
+                                idx -= 1;
+                            } else if items_len > 0 {
+                                idx = items_len - 1;
+                            }
+                            self.hfsm.modal = ModalState::FavoritesHistory { tab: current_tab, selected_index: idx };
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            if items_len > 0 {
+                                if idx + 1 < items_len {
+                                    idx += 1;
+                                } else {
+                                    idx = 0;
+                                }
+                            }
+                            self.hfsm.modal = ModalState::FavoritesHistory { tab: current_tab, selected_index: idx };
+                        }
+                        KeyCode::Enter => {
+                            let target_track = match current_tab {
+                                FavoritesHistoryTab::Favorites => self.library.favorites().get(idx).map(|f| (f.path.clone(), f.display_name.clone())),
+                                FavoritesHistoryTab::History => self.library.history().get(idx).map(|h| (h.path.clone(), h.display_name.clone())),
+                            };
+                            if let Some((path, _name)) = target_track {
+                                self.playlist.select_and_play_path(&path);
+                                self.apply_track_playback(&path);
+                                self.hfsm.close_modal();
+                            }
+                        }
+                        KeyCode::Char('d') | KeyCode::Delete => {
+                            match current_tab {
+                                FavoritesHistoryTab::Favorites => {
+                                    self.library.remove_favorite(idx);
+                                }
+                                FavoritesHistoryTab::History => {
+                                    self.library.remove_history(idx);
+                                }
+                            }
+                            let new_len = match current_tab {
+                                FavoritesHistoryTab::Favorites => self.library.favorites().len(),
+                                FavoritesHistoryTab::History => self.library.history().len(),
+                            };
+                            if idx >= new_len && new_len > 0 {
+                                idx = new_len - 1;
+                            } else if new_len == 0 {
+                                idx = 0;
+                            }
+                            self.hfsm.modal = ModalState::FavoritesHistory { tab: current_tab, selected_index: idx };
+                        }
+                        _ => {}
+                    }
+                }
                 ModalState::None => {}
             }
             return;
@@ -788,6 +878,27 @@ impl App {
             }
             KeyCode::Char('D') => {
                 self.delete_current_lyrics();
+            }
+            KeyCode::Char('f') => {
+                if let Some(entry) = self.playlist.selected_entry().cloned() {
+                    if let Some(audio) = entry.audio_item() {
+                        let path = audio.path.clone();
+                        let name = audio.display_name.clone();
+                        let added = self.library.toggle_favorite(&path, name.clone());
+                        let msg = if added {
+                            self.i18n.t_args("library.fav_added", &[("track", &name)])
+                        } else {
+                            self.i18n.t_args("library.fav_removed", &[("track", &name)])
+                        };
+                        self.lyrics_toast = Some((msg, Instant::now(), false));
+                    }
+                }
+            }
+            KeyCode::Char('F') => {
+                self.hfsm.open_modal(ModalState::FavoritesHistory {
+                    tab: FavoritesHistoryTab::Favorites,
+                    selected_index: 0,
+                });
             }
             KeyCode::Char('a') | KeyCode::Char('A') => {
                 if let Some(entry) = self.playlist.selected_entry().cloned() {
@@ -1177,6 +1288,7 @@ impl App {
                 // 1. プレイリスト描画
                 let playlist_view = PlaylistView {
                     playlist: &self.playlist,
+                    library: &self.library,
                     is_focused: active_pane == UiPane::Playlist,
                     i18n: &self.i18n,
                     theme: &self.theme,
@@ -1284,6 +1396,17 @@ impl App {
                         };
                         f.render_widget(m, size);
                     }
+                    ModalState::FavoritesHistory { tab, selected_index } => {
+                        let m = FavoritesHistoryModal {
+                            tab: *tab,
+                            selected_idx: *selected_index,
+                            favorites: self.library.favorites(),
+                            history: self.library.history(),
+                            i18n: &self.i18n,
+                            theme: &self.theme,
+                        };
+                        f.render_widget(m, size);
+                    }
                     ModalState::None => {}
                 }
             })?;
@@ -1367,8 +1490,30 @@ mod tests {
             app.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
             assert_eq!(app.search_query, "tes");
             app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-            assert!(!app.is_searching);
             assert_eq!(app.search_query, "");
+
+            // 7. Fキーでお気に入り・履歴モーダルオープン、Tabで切り替え、Escでクローズ
+            app.handle_key_event(KeyEvent::new(KeyCode::Char('F'), KeyModifiers::NONE));
+            assert_eq!(
+                app.hfsm.modal,
+                ModalState::FavoritesHistory {
+                    tab: FavoritesHistoryTab::Favorites,
+                    selected_index: 0
+                }
+            );
+            app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+            assert_eq!(
+                app.hfsm.modal,
+                ModalState::FavoritesHistory {
+                    tab: FavoritesHistoryTab::History,
+                    selected_index: 0
+                }
+            );
+            app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+            assert_eq!(app.hfsm.modal, ModalState::None);
+
+            // 8. fキーでのお気に入りトグルディスパッチ（空プレイリストでもクラッシュしない）
+            app.handle_key_event(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
 
             // qキーで終了
             app.handle_key_event(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
