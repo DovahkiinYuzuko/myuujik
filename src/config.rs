@@ -13,6 +13,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub equalizer: EqualizerConfig,
     #[serde(default)]
+    pub lyrics: LyricsConfig,
+    #[serde(default)]
     pub session: SessionConfig,
 }
 
@@ -125,6 +127,24 @@ pub struct SessionConfig {
     pub last_position_secs: f64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LyricsConfig {
+    #[serde(default = "default_duration_tolerance_secs")]
+    pub duration_tolerance_secs: u32,
+}
+
+fn default_duration_tolerance_secs() -> u32 {
+    5
+}
+
+impl Default for LyricsConfig {
+    fn default() -> Self {
+        Self {
+            duration_tolerance_secs: default_duration_tolerance_secs(),
+        }
+    }
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -132,6 +152,7 @@ impl Default for AppConfig {
             playback: PlaybackConfig::default(),
             ui: UiConfig::default(),
             equalizer: EqualizerConfig::default(),
+            lyrics: LyricsConfig::default(),
             session: SessionConfig::default(),
         }
     }

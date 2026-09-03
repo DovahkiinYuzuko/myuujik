@@ -90,9 +90,15 @@
     "eq_guide_close": "閉じる",
     "press_esc": "Esc または Enter で閉じる",
     "press_esc_q": "Esc / q で閉じる",
-    "press_dismiss": "Enter / Esc で閉じる",
     "default_badge": " (既定)",
-    "key_reference": "キーバインド一覧"
+    "key_reference": "キーバインド一覧",
+    "lyrics_search": "歌詞検索・候補選択",
+    "lyrics_search_query": "検索クエリ (曲名 / アーティスト):",
+    "lyrics_search_searching": "LRCLIBを検索中...",
+    "lyrics_search_no_results": "該当する歌詞が見つかりませんでした (Escで閉じる / / で再編集)",
+    "lyrics_search_sync_badge": "[同期]",
+    "lyrics_search_plain_badge": "[平文]",
+    "lyrics_search_guide": "↑/↓: 選択 | Enter: 適用して保存 | /: クエリ編集 | Esc: 閉じる"
   },
   "shortcuts": {
     "play_pause": "再生 / 一時停止",

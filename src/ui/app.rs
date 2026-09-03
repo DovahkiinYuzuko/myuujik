@@ -75,6 +75,9 @@ pub struct App {
     pub storage: crate::playlist::PlaylistStorage,
     pub folder_append_rx: Option<Receiver<Option<PathBuf>>>,
     pub save_dialog_rx: Option<Receiver<Option<(PathBuf, SavePlaylistTarget)>>>,
+    pub lyrics_search_candidates: Vec<crate::audio::lyrics_fetcher::LyricsCandidate>,
+    pub lyrics_search_rx: Option<Receiver<Result<Vec<crate::audio::lyrics_fetcher::LyricsCandidate>, String>>>,
+    pub lyrics_tolerance_secs: u32,
 }
 
 impl App {
@@ -160,6 +163,9 @@ impl App {
             storage: crate::playlist::PlaylistStorage::new(),
             folder_append_rx: None,
             save_dialog_rx: None,
+            lyrics_search_candidates: Vec::new(),
+            lyrics_search_rx: None,
+            lyrics_tolerance_secs: config.lyrics.duration_tolerance_secs,
         };
 
         app.engine.set_equalizer_enabled(app.eq_enabled);
@@ -370,10 +376,89 @@ impl App {
             false,
         ));
 
+        let tolerance = self.lyrics_tolerance_secs;
         std::thread::spawn(move || {
-            let res = crate::audio::lyrics_fetcher::auto_fetch_and_save_lyrics(&track_path);
+            let res = crate::audio::lyrics_fetcher::auto_fetch_and_save_lyrics(&track_path, tolerance);
             let _ = tx.send(res);
         });
+    }
+
+    /// 歌詞手動検索・候補選択モーダルを開く
+    pub fn open_lyrics_search_modal(&mut self) {
+        let track_path = self.playlist.current_track()
+            .map(|t| t.path.clone())
+            .or_else(|| self.playlist.selected_item().map(|t| t.path.clone()));
+
+        let initial_query = if let Some(ref path) = track_path {
+            let (meta_title, meta_artist, _) = crate::audio::lyrics_fetcher::extract_tags_from_file(path);
+            if let (Some(t), Some(a)) = (meta_title, meta_artist) {
+                format!("{a} {t}")
+            } else {
+                path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string()
+            }
+        } else {
+            String::new()
+        };
+
+        let initial_query = crate::audio::lyrics_fetcher::clean_title_from_filename(&initial_query);
+        let has_query = !initial_query.is_empty();
+
+        self.lyrics_search_candidates.clear();
+        self.hfsm.open_modal(crate::fsm::ModalState::LyricsSearch {
+            query: initial_query.clone(),
+            selected_index: 0,
+            is_searching: has_query,
+            input_mode: false,
+        });
+
+        if has_query {
+            self.trigger_lyrics_search(&initial_query);
+        }
+    }
+
+    /// 歌詞検索クエリを非同期で実行する
+    pub fn trigger_lyrics_search(&mut self, query: &str) {
+        let query_str = query.to_string();
+        let target_dur = self.current_metadata.as_ref()
+            .and_then(|m| m.duration_secs)
+            .map(|d| d.round() as u32)
+            .or_else(|| {
+                let dur = self.engine.total_duration_secs();
+                if dur > 0.0 { Some(dur.round() as u32) } else { None }
+            });
+        let tolerance = self.lyrics_tolerance_secs;
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.lyrics_search_rx = Some(rx);
+
+        std::thread::spawn(move || {
+            let res = crate::audio::lyrics_fetcher::search_lrclib_candidates(&query_str, target_dur, tolerance);
+            let _ = tx.send(res);
+        });
+    }
+
+    /// バックグラウンド歌詞手動検索の完了を検知して UI に反映する
+    pub fn check_lyrics_search_result(&mut self) {
+        if let Some(ref rx) = self.lyrics_search_rx {
+            if let Ok(res) = rx.try_recv() {
+                self.lyrics_search_rx = None;
+                match res {
+                    Ok(candidates) => {
+                        self.lyrics_search_candidates = candidates;
+                        if let crate::fsm::ModalState::LyricsSearch { ref mut is_searching, ref mut selected_index, .. } = self.hfsm.modal {
+                            *is_searching = false;
+                            *selected_index = 0;
+                        }
+                    }
+                    Err(_) => {
+                        self.lyrics_search_candidates.clear();
+                        if let crate::fsm::ModalState::LyricsSearch { ref mut is_searching, .. } = self.hfsm.modal {
+                            *is_searching = false;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// バックグラウンド歌詞自動取得の完了を検知して UI に反映する
@@ -853,6 +938,93 @@ impl App {
                         _ => {}
                     }
                 }
+                ModalState::LyricsSearch { query, selected_index, is_searching, input_mode } => {
+                    let mut q = query.clone();
+                    let mut sel = *selected_index;
+                    let mut searching = *is_searching;
+                    let mut inp = *input_mode;
+
+                    if inp {
+                        match key.code {
+                            KeyCode::Esc => {
+                                inp = false;
+                            }
+                            KeyCode::Enter => {
+                                inp = false;
+                                searching = true;
+                                let search_q = q.clone();
+                                self.trigger_lyrics_search(&search_q);
+                            }
+                            KeyCode::Backspace => {
+                                q.pop();
+                            }
+                            KeyCode::Char(c) => {
+                                q.push(c);
+                            }
+                            _ => {}
+                        }
+                    } else {
+                        let len = self.lyrics_search_candidates.len();
+                        match key.code {
+                            KeyCode::Esc | KeyCode::Char('q') => {
+                                self.hfsm.close_modal();
+                                return;
+                            }
+                            KeyCode::Char('/') => {
+                                inp = true;
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                if sel > 0 {
+                                    sel -= 1;
+                                } else if len > 0 {
+                                    sel = len - 1;
+                                }
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                if len > 0 {
+                                    if sel + 1 < len {
+                                        sel += 1;
+                                    } else {
+                                        sel = 0;
+                                    }
+                                }
+                            }
+                            KeyCode::Enter => {
+                                if let Some(cand) = self.lyrics_search_candidates.get(sel).cloned() {
+                                    let content = cand.synced_lyrics.or(cand.plain_lyrics);
+                                    if let Some(text) = content {
+                                        let track_path = self.playlist.current_track()
+                                            .map(|t| t.path.clone())
+                                            .or_else(|| self.playlist.selected_item().map(|t| t.path.clone()));
+
+                                        if let Some(target_p) = track_path {
+                                            let lrc_path = target_p.with_extension("lrc");
+                                            if let Ok(_) = std::fs::write(&lrc_path, text) {
+                                                if let Some(lyrics) = crate::audio::lyrics::load_for_track(&target_p) {
+                                                    self.current_lyrics = Some(lyrics);
+                                                }
+                                                self.show_lyrics = true;
+                                                let display = format!("{} - {}", cand.artist_name, cand.track_name);
+                                                let msg = self.i18n.t_args("lyrics.fetch_success", &[("track", &display)]);
+                                                self.lyrics_toast = Some((msg, Instant::now(), false));
+                                            }
+                                        }
+                                    }
+                                }
+                                self.hfsm.close_modal();
+                                return;
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    self.hfsm.modal = ModalState::LyricsSearch {
+                        query: q,
+                        selected_index: sel,
+                        is_searching: searching,
+                        input_mode: inp,
+                    };
+                }
                 ModalState::None => {}
             }
             return;
@@ -1019,10 +1191,14 @@ impl App {
                 self.hfsm.open_modal(ModalState::Equalizer { selected_band: 0 });
             }
             KeyCode::Char('d') => {
-                self.start_lyrics_auto_fetch();
+                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                    self.open_lyrics_search_modal();
+                } else {
+                    self.start_lyrics_auto_fetch();
+                }
             }
             KeyCode::Char('D') => {
-                self.delete_current_lyrics();
+                self.open_lyrics_search_modal();
             }
             KeyCode::Char('f') => {
                 if let Some(entry) = self.playlist.selected_entry().cloned() {
@@ -1340,6 +1516,7 @@ impl App {
             self.check_folder_append_result();
             self.check_save_playlist_result();
             self.check_lyrics_fetch_result();
+            self.check_lyrics_search_result();
             if let Ok(term_size) = terminal.size() {
                 let right_width = (term_size.width as f32 * 0.62).round() as usize;
                 let target_len = right_width.saturating_sub(4).clamp(16, 128);
@@ -1580,6 +1757,18 @@ impl App {
                         let m = crate::ui::modals::PlaylistManagerModal {
                             playlists: &playlists,
                             selected_index: *selected_index,
+                            i18n: &self.i18n,
+                            theme: &self.theme,
+                        };
+                        f.render_widget(m, size);
+                    }
+                    ModalState::LyricsSearch { query, selected_index, is_searching, input_mode } => {
+                        let m = crate::ui::modals::LyricsSearchModal {
+                            query,
+                            candidates: &self.lyrics_search_candidates,
+                            selected_idx: *selected_index,
+                            is_searching: *is_searching,
+                            input_mode: *input_mode,
                             i18n: &self.i18n,
                             theme: &self.theme,
                         };

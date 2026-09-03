@@ -20,6 +20,12 @@ pub enum ModalState {
     Equalizer { selected_band: usize },
     FavoritesHistory { tab: FavoritesHistoryTab, selected_index: usize },
     PlaylistManager { selected_index: usize },
+    LyricsSearch {
+        query: String,
+        selected_index: usize,
+        is_searching: bool,
+        input_mode: bool,
+    },
 }
 
 #[derive(Debug, Clone)]

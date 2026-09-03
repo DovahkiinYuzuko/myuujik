@@ -629,3 +629,125 @@ impl<'a> Widget for PlaylistManagerModal<'a> {
     }
 }
 
+pub struct LyricsSearchModal<'a> {
+    pub query: &'a str,
+    pub candidates: &'a [crate::audio::lyrics_fetcher::LyricsCandidate],
+    pub selected_idx: usize,
+    pub is_searching: bool,
+    pub input_mode: bool,
+    pub i18n: &'a I18n,
+    pub theme: &'a Theme,
+}
+
+impl<'a> Widget for LyricsSearchModal<'a> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let modal_area = centered_rect(75, 70, area);
+        Clear.render(modal_area, buf);
+
+        let title = format!(" [ {} ] ", self.i18n.t("modal.lyrics_search"));
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(self.theme.primary))
+            .style(Style::default().bg(self.theme.bg_card))
+            .title(Span::styled(title, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)));
+
+        let inner = block.inner(modal_area);
+        block.render(modal_area, buf);
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // 検索クエリ枠
+                Constraint::Min(5),    // 候補リスト
+                Constraint::Length(1), // フッター操作ガイド
+            ])
+            .split(inner);
+
+        // 1. 検索クエリ入力バー
+        let query_border_color = if self.input_mode { self.theme.border_focus } else { self.theme.border_unfocused };
+        let query_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(query_border_color))
+            .style(Style::default().bg(self.theme.bg_card))
+            .title(Span::styled(
+                format!(" {} ", self.i18n.t("modal.lyrics_search_query")),
+                Style::default().fg(if self.input_mode { self.theme.accent_playing } else { self.theme.text_secondary }),
+            ));
+
+        let cursor_char = if self.input_mode { "█" } else { "" };
+        let query_line = Line::from(vec![
+            Span::styled(format!(" {} ", self.query), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(cursor_char, Style::default().fg(self.theme.accent_playing)),
+        ]);
+        Paragraph::new(query_line).block(query_block).render(chunks[0], buf);
+
+        // 2. 候補リスト
+        if self.is_searching {
+            let searching_line = Line::from(vec![
+                Span::styled(" ⏳ ", Style::default().fg(self.theme.accent_playing)),
+                Span::styled(self.i18n.t("modal.lyrics_search_searching"), Style::default().fg(self.theme.text_secondary)),
+            ]);
+            Paragraph::new(searching_line).render(chunks[1], buf);
+        } else if self.candidates.is_empty() {
+            let no_res_line = Line::from(vec![
+                Span::styled(format!("   {}", self.i18n.t("modal.lyrics_search_no_results")), Style::default().fg(self.theme.text_secondary)),
+            ]);
+            Paragraph::new(no_res_line).render(chunks[1], buf);
+        } else {
+            let sync_badge_text = self.i18n.t("modal.lyrics_search_sync_badge");
+            let plain_badge_text = self.i18n.t("modal.lyrics_search_plain_badge");
+
+            let items: Vec<ListItem> = self
+                .candidates
+                .iter()
+                .enumerate()
+                .map(|(idx, cand)| {
+                    let is_sel = idx == self.selected_idx;
+                    let prefix = if is_sel { " ▶ " } else { "   " };
+
+                    let dur_min = cand.duration_secs / 60;
+                    let dur_sec = cand.duration_secs % 60;
+                    let dur_str = format!("[{:02}:{:02}]", dur_min, dur_sec);
+
+                    let (badge_str, badge_color) = if cand.is_synced {
+                        (sync_badge_text.as_str(), self.theme.accent_playing)
+                    } else {
+                        (plain_badge_text.as_str(), self.theme.text_secondary)
+                    };
+
+                    let line = Line::from(vec![
+                        Span::styled(prefix, Style::default().fg(if is_sel { self.theme.primary } else { self.theme.text_secondary })),
+                        Span::styled(
+                            format!("{:<28} ", cand.track_name),
+                            Style::default().fg(if is_sel { Color::White } else { self.theme.text_primary }).add_modifier(if is_sel { Modifier::BOLD } else { Modifier::empty() }),
+                        ),
+                        Span::styled(
+                            format!("- {:<22} ", cand.artist_name),
+                            Style::default().fg(self.theme.text_secondary),
+                        ),
+                        Span::styled(format!("{} ", dur_str), Style::default().fg(self.theme.text_secondary)),
+                        Span::styled(badge_str, Style::default().fg(badge_color).add_modifier(Modifier::BOLD)),
+                    ]);
+
+                    let style = if is_sel {
+                        Style::default().bg(self.theme.primary).fg(Color::White)
+                    } else {
+                        Style::default().bg(self.theme.bg_card)
+                    };
+                    ListItem::new(line).style(style)
+                })
+                .collect();
+
+            let list = List::new(items).style(Style::default().bg(self.theme.bg_card));
+            list.render(chunks[1], buf);
+        }
+
+        // 3. フッター操作ガイド
+        let footer_line = Line::from(vec![
+            Span::styled(format!("  {}", self.i18n.t("modal.lyrics_search_guide")), Style::default().fg(self.theme.text_secondary)),
+        ]);
+        Paragraph::new(footer_line).render(chunks[2], buf);
+    }
+}
+
+
