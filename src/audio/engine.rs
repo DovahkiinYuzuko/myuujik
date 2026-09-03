@@ -33,7 +33,6 @@ pub enum EngineCommand {
     SetEqualizerGains(Vec<f32>),
     SetEqualizerEnabled(bool),
     SetNormalizeLoudness(bool),
-    SetCrossfadeSecs(f32),
 }
 
 #[derive(Clone)]
@@ -145,10 +144,6 @@ impl AudioEngine {
         let _ = self.send_command(EngineCommand::SetNormalizeLoudness(enabled));
     }
 
-    pub fn set_crossfade_secs(&self, secs: f32) {
-        let _ = self.send_command(EngineCommand::SetCrossfadeSecs(secs));
-    }
-
     pub fn send_command(&self, cmd: EngineCommand) -> Result<(), crossbeam_channel::SendError<EngineCommand>> {
         self.cmd_tx.send(cmd)
     }
@@ -237,8 +232,6 @@ impl AudioEngine {
         let mut eof_drain_started: Option<std::time::Instant> = None;
         let mut equalizer = crate::audio::equalizer::Equalizer::new(44100.0);
         let mut normalize_loudness = true;
-        let mut crossfade_secs: f32 = 0.0;
-        let mut crossfade_fsm = crate::fsm::CrossfadeFsm::new();
         let mut current_replay_gain: f32 = 1.0;
         let mut next_replay_gain: f32 = 1.0;
 
@@ -351,7 +344,6 @@ impl AudioEngine {
                                         } else {
                                             1.0
                                         };
-                                        crossfade_fsm.transition(crate::fsm::CrossfadeEvent::Reset);
                                         shared_state.is_playing.store(true, Ordering::Relaxed);
                                         fsm.write().unwrap().transition(PlaybackEvent::BufferReady);
                                         logger::info("AudioEngine", "Backend initialized and started successfully.");
@@ -407,7 +399,6 @@ impl AudioEngine {
                         preloaded = None;
                         pending_samples.clear();
                         pending_offset = 0;
-                        crossfade_fsm.transition(crate::fsm::CrossfadeEvent::Reset);
                         is_eof = false;
                         eof_drain_started = None;
                     }
@@ -426,7 +417,6 @@ impl AudioEngine {
                                         pending_offset = 0;
                                         is_eof = false;
                                         eof_drain_started = None;
-                                        crossfade_fsm.transition(crate::fsm::CrossfadeEvent::Reset);
                                         shared_state.is_playing.store(true, Ordering::Relaxed);
                                         fsm.write().unwrap().transition(PlaybackEvent::BufferReady);
                                     }
@@ -461,9 +451,6 @@ impl AudioEngine {
                                 1.0
                             };
                         }
-                    }
-                    EngineCommand::SetCrossfadeSecs(secs) => {
-                        crossfade_secs = secs.max(0.0);
                     }
                     EngineCommand::SetOutputMode(mode) => {
                         logger::info("AudioEngine", &format!("Switching output mode from {} to {}", current_mode, mode));
@@ -593,158 +580,80 @@ impl AudioEngine {
 
                         // 2. 残余サンプルが空になり、かつ未完了（!is_eof）でリングバッファに空きがあれば次のパケットを取得
                         if !is_eof && prod.slots() > 0 {
-                            let curr_rate = shared_state.sample_rate.load(Ordering::Relaxed);
-                            let curr_channels = shared_state.channels.load(Ordering::Relaxed);
-                            let ch_count = curr_channels.max(1) as usize;
+                            match dec.next_interleaved_packet() {
+                                Ok(Some(mut samples)) => {
+                                    if samples.is_empty() {
+                                        continue;
+                                    }
 
-                            // クロスフェード開始判定（設定秒数 > 0、未開始、次曲プリロード済みかつフォーマット同一）
-                            if !crossfade_fsm.is_crossfading() && crossfade_secs > 0.0 && preloaded.is_some() {
-                                if let Some((_, next_dec)) = preloaded.as_ref() {
-                                    let next_meta = next_dec.metadata();
-                                    if next_meta.sample_rate == curr_rate && (next_meta.channels as u32) == curr_channels {
-                                        let total_frames = shared_state.total_samples.load(Ordering::Relaxed);
-                                        let curr_pos = shared_state.current_sample_position.load(Ordering::Relaxed);
-                                        let crossfade_frames = (crossfade_secs * curr_rate as f32) as u64;
-                                        if total_frames > 0 && curr_pos < total_frames && (total_frames - curr_pos) <= crossfade_frames {
-                                            crossfade_fsm.transition(crate::fsm::CrossfadeEvent::StartCrossfade { total_frames: crossfade_frames });
-                                            logger::info("AudioEngine", &format!("Starting equal-power crossfade ({} frames)", crossfade_frames));
+                                    // ReplayGain ゲインスケーリング & ソフトサチュレーションガード
+                                    if (current_replay_gain - 1.0).abs() > 1e-4 {
+                                        for s in samples.iter_mut() {
+                                            *s = (*s * current_replay_gain).clamp(-1.0, 1.0);
                                         }
                                     }
+
+                                    let ch_count = shared_state.channels.load(Ordering::Relaxed).max(1) as usize;
+                                    equalizer.process_interleaved(&mut samples, ch_count);
+
+                                    let available_slots = prod.slots();
+                                    let to_push = available_slots.min(samples.len());
+
+                                    for &s in &samples[..to_push] {
+                                        let _ = prod.push(s);
+                                    }
+
+                                    // 入り切らなかった残りは pending_samples に退避
+                                    if to_push < samples.len() {
+                                        pending_samples = samples;
+                                        pending_offset = to_push;
+                                        break; // バッファ満杯のためバックプレッシャー
+                                    }
                                 }
-                            }
+                                Ok(None) => {
+                                    logger::info("AudioEngine", "Decoder reached EOF.");
+                                    if let Some((next_path, next_dec)) = preloaded.take() {
+                                        let curr_rate = shared_state.sample_rate.load(Ordering::Relaxed);
+                                        let curr_channels = shared_state.channels.load(Ordering::Relaxed);
+                                        let next_meta = next_dec.metadata().clone();
 
-                            // 2-A. クロスフェード実行中のミキシング処理
-                            if crossfade_fsm.is_crossfading() {
-                                if let Some((_next_path, next_dec)) = preloaded.as_mut() {
-                                    let curr_packet = dec.next_interleaved_packet();
-                                    let next_packet = next_dec.next_interleaved_packet();
-
-                                    match (curr_packet, next_packet) {
-                                        (Ok(Some(curr_s)), Ok(Some(next_s))) => {
-                                            let min_len = curr_s.len().min(next_s.len());
-                                            let (g_out, g_in) = crossfade_fsm.gains();
-                                            let mut mixed = Vec::with_capacity(min_len);
-                                            for i in 0..min_len {
-                                                let s1 = curr_s[i] * current_replay_gain * g_out;
-                                                let s2 = next_s[i] * next_replay_gain * g_in;
-                                                mixed.push((s1 + s2).clamp(-1.0, 1.0));
-                                            }
-
-                                            equalizer.process_interleaved(&mut mixed, ch_count);
-
-                                            let frames_advanced = (min_len / ch_count) as u64;
-                                            crossfade_fsm.transition(crate::fsm::CrossfadeEvent::Advance { frames: frames_advanced });
-
-                                            let available_slots = prod.slots();
-                                            let to_push = available_slots.min(mixed.len());
-                                            for &s in &mixed[..to_push] {
-                                                let _ = prod.push(s);
-                                            }
-                                            if to_push < mixed.len() {
-                                                pending_samples = mixed;
-                                                pending_offset = to_push;
-                                                break;
-                                            }
-                                        }
-                                        // 現在曲終了またはクロスフェード完了時: 次曲へ昇格
-                                        _ => {
-                                            logger::info("AudioEngine", "Crossfade finished or current track ended. Transitioning to next track.");
-                                            let (n_path, n_dec) = preloaded.take().unwrap();
-                                            let n_meta = n_dec.metadata().clone();
-                                            if let Some(dur) = n_meta.duration_secs {
-                                                let total_frames = (dur * n_meta.sample_rate as f64) as u64;
+                                        if next_meta.sample_rate == curr_rate && (next_meta.channels as u32) == curr_channels {
+                                            logger::info(
+                                                "AudioEngine",
+                                                &format!("Executing seamless gapless transition to next track: {:?}", next_path),
+                                            );
+                                            if let Some(dur) = next_meta.duration_secs {
+                                                let total_frames = (dur * next_meta.sample_rate as f64) as u64;
                                                 shared_state.total_samples.store(total_frames, Ordering::Relaxed);
                                             } else {
                                                 shared_state.total_samples.store(0, Ordering::Relaxed);
                                             }
                                             shared_state.current_sample_position.store(0, Ordering::Relaxed);
-                                            equalizer.set_sample_rate(n_meta.sample_rate as f32);
+
+                                            equalizer.set_sample_rate(next_meta.sample_rate as f32);
                                             current_replay_gain = next_replay_gain;
-                                            crossfade_fsm.transition(crate::fsm::CrossfadeEvent::Complete);
-                                            let _ = notif_tx.send(EngineNotification::TrackTransitioned(n_path, n_meta));
-                                            *dec = n_dec;
+                                            let _ = notif_tx.send(EngineNotification::TrackTransitioned(next_path, next_meta));
+                                            *dec = next_dec;
                                             continue;
-                                        }
-                                    }
-                                } else {
-                                    crossfade_fsm.transition(crate::fsm::CrossfadeEvent::Reset);
-                                }
-                            } else {
-                                // 2-B. 通常の単一トラックデコード処理
-                                match dec.next_interleaved_packet() {
-                                    Ok(Some(mut samples)) => {
-                                        if samples.is_empty() {
-                                            continue;
-                                        }
-
-                                        // ReplayGain ゲインスケーリング & ソフトサチュレーションガード
-                                        if (current_replay_gain - 1.0).abs() > 1e-4 {
-                                            for s in samples.iter_mut() {
-                                                *s = (*s * current_replay_gain).clamp(-1.0, 1.0);
-                                            }
-                                        }
-
-                                        equalizer.process_interleaved(&mut samples, ch_count);
-
-                                        let available_slots = prod.slots();
-                                        let to_push = available_slots.min(samples.len());
-
-                                        for &s in &samples[..to_push] {
-                                            let _ = prod.push(s);
-                                        }
-
-                                        // 入り切らなかった残りは pending_samples に退避
-                                        if to_push < samples.len() {
-                                            pending_samples = samples;
-                                            pending_offset = to_push;
-                                            break; // バッファ満杯のためバックプレッシャー
-                                        }
-                                    }
-                                    Ok(None) => {
-                                        logger::info("AudioEngine", "Decoder reached EOF.");
-                                        if let Some((next_path, next_dec)) = preloaded.take() {
-                                            let curr_rate = shared_state.sample_rate.load(Ordering::Relaxed);
-                                            let curr_channels = shared_state.channels.load(Ordering::Relaxed);
-                                            let next_meta = next_dec.metadata().clone();
-
-                                            if next_meta.sample_rate == curr_rate && (next_meta.channels as u32) == curr_channels {
-                                                logger::info(
-                                                    "AudioEngine",
-                                                    &format!("Executing seamless gapless transition to next track: {:?}", next_path),
-                                                );
-                                                if let Some(dur) = next_meta.duration_secs {
-                                                    let total_frames = (dur * next_meta.sample_rate as f64) as u64;
-                                                    shared_state.total_samples.store(total_frames, Ordering::Relaxed);
-                                                } else {
-                                                    shared_state.total_samples.store(0, Ordering::Relaxed);
-                                                }
-                                                shared_state.current_sample_position.store(0, Ordering::Relaxed);
-
-                                                equalizer.set_sample_rate(next_meta.sample_rate as f32);
-                                                current_replay_gain = next_replay_gain;
-                                                let _ = notif_tx.send(EngineNotification::TrackTransitioned(next_path, next_meta));
-                                                *dec = next_dec;
-                                                continue;
-                                            } else {
-                                                logger::info("AudioEngine", "Next track has different audio format. Waiting for buffer drain.");
-                                                preloaded = Some((next_path, next_dec));
-                                                is_eof = true;
-                                                break;
-                                            }
                                         } else {
-                                            logger::info("AudioEngine", "Draining remaining ring buffer samples...");
+                                            logger::info("AudioEngine", "Next track has different audio format. Waiting for buffer drain.");
+                                            preloaded = Some((next_path, next_dec));
                                             is_eof = true;
                                             break;
                                         }
-                                    }
-                                    Err(e) => {
-                                        logger::error("AudioEngine", &format!("Decoding packet error: {}", e));
-                                        fsm.write().unwrap().transition(PlaybackEvent::DeviceError(e.to_string()));
-                                        pending_samples.clear();
-                                        pending_offset = 0;
-                                        is_eof = false;
+                                    } else {
+                                        logger::info("AudioEngine", "Draining remaining ring buffer samples...");
+                                        is_eof = true;
                                         break;
                                     }
+                                }
+                                Err(e) => {
+                                    logger::error("AudioEngine", &format!("Decoding packet error: {}", e));
+                                    fsm.write().unwrap().transition(PlaybackEvent::DeviceError(e.to_string()));
+                                    pending_samples.clear();
+                                    pending_offset = 0;
+                                    is_eof = false;
+                                    break;
                                 }
                             }
                         } else if is_eof {
