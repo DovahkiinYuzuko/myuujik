@@ -125,6 +125,10 @@ impl AudioEngine {
         self.shared_state.get_visualizer_points(points_count)
     }
 
+    pub fn get_visualizer_raw_samples(&self) -> Vec<f32> {
+        self.shared_state.get_visualizer_raw_samples()
+    }
+
     pub fn send_command(&self, cmd: EngineCommand) -> Result<(), crossbeam_channel::SendError<EngineCommand>> {
         self.cmd_tx.send(cmd)
     }

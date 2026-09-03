@@ -2,7 +2,7 @@ use crate::audio::decoder::{AudioDecoder, TrackMetadata};
 use crate::audio::engine::{AudioEngine, EngineNotification};
 use crate::audio::shared::SharedBackend;
 use crate::audio::traits::AudioDeviceInfo;
-use crate::audio::visualizer::{VisualizerMode, WaveformAnalyzer};
+use crate::audio::visualizer::{FftSpectrumAnalyzer, VisualizerMode, WaveformAnalyzer};
 use crate::config::AppConfig;
 use crate::fsm::playback_fsm::PlaybackState;
 use crate::fsm::ui_hfsm::{ModalState, UiHfsm, UiPane};
@@ -34,6 +34,7 @@ pub struct App {
     pub cover_widget: CoverArtWidget,
     pub waveform_analyzer: WaveformAnalyzer,
     pub waveform_points: Vec<f32>,
+    pub spectrum_analyzer: FftSpectrumAnalyzer,
     pub visualizer_mode: VisualizerMode,
     pub available_devices: Vec<AudioDeviceInfo>,
     pub device_modal_idx: usize,
@@ -91,7 +92,9 @@ impl App {
         let available_devices = SharedBackend::list_devices();
         let visualizer_mode = match config.ui.visualizer_mode.as_str() {
             "Type3" => VisualizerMode::Type3,
-            _ => VisualizerMode::Type4,
+            "Type4" => VisualizerMode::Type4,
+            "Spectrum" => VisualizerMode::Spectrum,
+            _ => VisualizerMode::default(),
         };
 
         let mut app = Self {
@@ -103,6 +106,7 @@ impl App {
             cover_widget: CoverArtWidget::new(),
             waveform_analyzer: WaveformAnalyzer::new(2048),
             waveform_points: vec![0.0; 48],
+            spectrum_analyzer: FftSpectrumAnalyzer::default(),
             visualizer_mode,
             available_devices,
             device_modal_idx: 0,
@@ -475,6 +479,7 @@ impl App {
         self.config.ui.visualizer_mode = match self.visualizer_mode {
             VisualizerMode::Type3 => "Type3".to_string(),
             VisualizerMode::Type4 => "Type4".to_string(),
+            VisualizerMode::Spectrum => "Spectrum".to_string(),
         };
         self.config.ui.show_lyrics = self.show_lyrics;
 
@@ -1015,11 +1020,20 @@ impl App {
                             }
                         }
                     }
+                    VisualizerMode::Spectrum => {
+                        // SPECTRUM: 本格FFT対数周波数解析
+                        let raw_samples = self.engine.get_visualizer_raw_samples();
+                        if !raw_samples.is_empty() {
+                            self.spectrum_analyzer.push_samples(&raw_samples);
+                        }
+                        self.spectrum_analyzer.process();
+                    }
                 }
             } else {
                 for p in &mut self.waveform_points {
                     *p *= 0.8;
                 }
+                self.spectrum_analyzer.process();
             }
 
             terminal.draw(|f| {
@@ -1141,6 +1155,7 @@ impl App {
                     is_focused: active_pane == UiPane::Controls,
                     visualizer_mode: self.visualizer_mode,
                     waveform_points: &self.waveform_points,
+                    spectrum_bands: self.spectrum_analyzer.get_bands(),
                     lyrics: self.current_lyrics.as_ref(),
                     show_lyrics: self.show_lyrics,
                     is_fetching_lyrics: self.lyrics_fetch_rx.is_some(),

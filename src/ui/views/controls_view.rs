@@ -21,6 +21,7 @@ pub struct ControlsView<'a> {
     pub is_focused: bool,
     pub visualizer_mode: VisualizerMode,
     pub waveform_points: &'a [f32],
+    pub spectrum_bands: (&'a [f32], &'a [f32]),
     pub lyrics: Option<&'a Lyrics>,
     pub show_lyrics: bool,
     pub is_fetching_lyrics: bool,
@@ -273,6 +274,76 @@ impl<'a> Widget for ControlsView<'a> {
                         .data(&spark_data)
                         .max(100);
                     sparkline.render(chunks[2], buf);
+                }
+                VisualizerMode::Spectrum => {
+                    // SPECTRUM: 本格対数周波数スペアナ（ブロック文字 ▂▃▄▅▆▇█ ＋ ピークドット ▔）
+                    let rect = chunks[2];
+                    let width = rect.width as usize;
+                    let height = rect.height as usize;
+                    if width > 0 && height > 0 {
+                        let (bars, peaks) = self.spectrum_bands;
+                        let blocks = [' ', ' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+                        let num_bars = (width + 1) / 2;
+
+                        for bar_idx in 0..num_bars {
+                            let col = bar_idx * 2;
+                            if col >= width {
+                                break;
+                            }
+
+                            // バンドデータのマッピング（64バンドからnum_barsへのリサンプリング）
+                            let (val, peak) = if !bars.is_empty() {
+                                let ratio = bar_idx as f32 / num_bars.max(1) as f32;
+                                let src_idx = ((ratio * bars.len() as f32) as usize).min(bars.len() - 1);
+                                (bars[src_idx].clamp(0.0, 1.0), peaks[src_idx].clamp(0.0, 1.0))
+                            } else {
+                                (0.0, 0.0)
+                            };
+
+                            let total_bar_height = val * (height as f32);
+                            let peak_row = ((peak * height as f32).round() as usize).min(height.saturating_sub(1));
+
+                            // 周波数帯域グラデーションカラー (低域: シアン, 中域: グリーン, 高域: ピンク)
+                            let progress = bar_idx as f32 / num_bars.max(1) as f32;
+                            let bar_color = if progress < 0.33 {
+                                Color::Rgb(56, 189, 248) // Bass
+                            } else if progress < 0.66 {
+                                Color::Rgb(52, 211, 153) // Mid
+                            } else {
+                                Color::Rgb(244, 114, 182) // Treble
+                            };
+
+                            for row in 0..height {
+                                let bottom_up = height - 1 - row;
+                                let cell_x = rect.x + col as u16;
+                                let cell_y = rect.y + row as u16;
+
+                                if cell_x < rect.x + rect.width && cell_y < rect.y + rect.height {
+                                    let cell = &mut buf[(cell_x, cell_y)];
+
+                                    // ピークドット判定
+                                    if bottom_up == peak_row && peak_row > total_bar_height.ceil() as usize && peak > 0.05 {
+                                        cell.set_symbol("▔");
+                                        cell.set_fg(Color::Rgb(255, 255, 255));
+                                        cell.set_bg(self.theme.bg_card);
+                                    } else if total_bar_height >= (bottom_up + 1) as f32 {
+                                        cell.set_symbol("█");
+                                        cell.set_fg(bar_color);
+                                        cell.set_bg(self.theme.bg_card);
+                                    } else if total_bar_height <= bottom_up as f32 {
+                                        cell.set_symbol(" ");
+                                        cell.set_bg(self.theme.bg_card);
+                                    } else {
+                                        let frac = total_bar_height - bottom_up as f32;
+                                        let idx = ((frac * 8.0).round() as usize).clamp(1, 8);
+                                        cell.set_symbol(&blocks[idx].to_string());
+                                        cell.set_fg(bar_color);
+                                        cell.set_bg(self.theme.bg_card);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

@@ -415,6 +415,7 @@ impl ExclusiveBackend {
 
                 let mut resampler = crate::audio::resampler::AudioResampler::new(sample_rate, chosen_rate, channels);
                 let mut resampled_fifo = std::collections::VecDeque::<f32>::with_capacity(total_buffer_samples * 2);
+                let mut pre_vol_buf = vec![0.0f32; total_buffer_samples];
 
                 // イベントドリブン WASAPI 再生ループ（タイムアウト50ms＋即時停止検知）
                 while !stop_signal_clone.load(Ordering::Relaxed) {
@@ -441,6 +442,7 @@ impl ExclusiveBackend {
                             let slice = std::slice::from_raw_parts_mut(p_data as *mut f32, total_buffer_samples);
                             if is_active {
                                 let mut frames_read = 0;
+                                let mut sample_idx = 0;
                                 if resampler.is_resampling_needed() {
                                     while resampled_fifo.len() < total_buffer_samples {
                                         let mut chunk = Vec::with_capacity(256 * ch_count);
@@ -463,7 +465,9 @@ impl ExclusiveBackend {
                                         let has_sample = resampled_fifo.len() >= ch_count;
                                         for ch_sample in frame.iter_mut() {
                                             let s = resampled_fifo.pop_front().unwrap_or(0.0);
+                                            pre_vol_buf[sample_idx] = s;
                                             *ch_sample = s * vol;
+                                            sample_idx += 1;
                                         }
                                         if has_sample {
                                             frames_read += 1;
@@ -475,13 +479,16 @@ impl ExclusiveBackend {
                                         for ch_sample in frame.iter_mut() {
                                             match consumer.pop() {
                                                 Ok(s) => {
+                                                    pre_vol_buf[sample_idx] = s;
                                                     *ch_sample = s * vol;
                                                 }
                                                 Err(_) => {
+                                                    pre_vol_buf[sample_idx] = 0.0;
                                                     *ch_sample = 0.0;
                                                     frame_ok = false;
                                                 }
                                             }
+                                            sample_idx += 1;
                                         }
                                         if frame_ok {
                                             frames_read += 1;
@@ -495,7 +502,8 @@ impl ExclusiveBackend {
                                         frames_read as u64
                                     };
                                     state.current_sample_position.fetch_add(native_frames, Ordering::Relaxed);
-                                    state.push_visualizer_samples(slice);
+                                    // プリボリューム（音量非依存）の原音サンプルをビジュアライザへ供給
+                                    state.push_visualizer_samples(&pre_vol_buf[..sample_idx]);
                                 }
                             } else {
                                 slice.fill(0.0);
@@ -504,6 +512,7 @@ impl ExclusiveBackend {
                             let slice = std::slice::from_raw_parts_mut(p_data as *mut i16, total_buffer_samples);
                             if is_active {
                                 let mut frames_read = 0;
+                                let mut sample_idx = 0;
                                 if resampler.is_resampling_needed() {
                                     while resampled_fifo.len() < total_buffer_samples {
                                         let mut chunk = Vec::with_capacity(256 * ch_count);
@@ -526,8 +535,10 @@ impl ExclusiveBackend {
                                         let has_sample = resampled_fifo.len() >= ch_count;
                                         for ch_sample in frame.iter_mut() {
                                             let s = resampled_fifo.pop_front().unwrap_or(0.0);
+                                            pre_vol_buf[sample_idx] = s;
                                             let scaled = (s * vol * 32767.0).clamp(-32768.0, 32767.0);
                                             *ch_sample = scaled as i16;
+                                            sample_idx += 1;
                                         }
                                         if has_sample {
                                             frames_read += 1;
@@ -539,14 +550,17 @@ impl ExclusiveBackend {
                                         for ch_sample in frame.iter_mut() {
                                             match consumer.pop() {
                                                 Ok(s) => {
+                                                    pre_vol_buf[sample_idx] = s;
                                                     let scaled = (s * vol * 32767.0).clamp(-32768.0, 32767.0);
                                                     *ch_sample = scaled as i16;
                                                 }
                                                 Err(_) => {
+                                                    pre_vol_buf[sample_idx] = 0.0;
                                                     *ch_sample = 0;
                                                     frame_ok = false;
                                                 }
                                             }
+                                            sample_idx += 1;
                                         }
                                         if frame_ok {
                                             frames_read += 1;
@@ -560,13 +574,8 @@ impl ExclusiveBackend {
                                         frames_read as u64
                                     };
                                     state.current_sample_position.fetch_add(native_frames, Ordering::Relaxed);
-                                    let mut f32_chunk = [0.0f32; 1024];
-                                    for chunk in slice.chunks(f32_chunk.len()) {
-                                        for (out_s, &in_s) in f32_chunk.iter_mut().zip(chunk.iter()) {
-                                            *out_s = in_s as f32 / 32768.0;
-                                        }
-                                        state.push_visualizer_samples(&f32_chunk[..chunk.len()]);
-                                    }
+                                    // プリボリューム（音量非依存）の原音サンプルをビジュアライザへ供給
+                                    state.push_visualizer_samples(&pre_vol_buf[..sample_idx]);
                                 }
                             } else {
                                 slice.fill(0);

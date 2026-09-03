@@ -101,6 +101,14 @@ impl SharedAudioState {
             vec![0.0; points_count]
         }
     }
+
+    pub fn get_visualizer_raw_samples(&self) -> Vec<f32> {
+        if let Ok(buf) = self.visualizer_samples.lock() {
+            buf.clone()
+        } else {
+            Vec::new()
+        }
+    }
 }
 
 impl Default for SharedAudioState {

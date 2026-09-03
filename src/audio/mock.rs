@@ -42,13 +42,15 @@ impl MockAudioBackend {
                     }
 
                     if read > 0 {
+                        // プリボリューム（音量非依存）の原音サンプルをビジュアライザに供給
+                        state.push_visualizer_samples(&buf[..read]);
+
                         let vol = state.get_volume();
                         for s in &mut buf[..read] {
                             *s *= vol;
                         }
                         // ステレオ想定（2chで割る）
                         state.current_sample_position.fetch_add(read as u64 / 2, Ordering::Relaxed);
-                        state.push_visualizer_samples(&buf[..read]);
                     }
                 }
                 thread::sleep(Duration::from_millis(5));

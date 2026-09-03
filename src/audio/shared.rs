@@ -95,6 +95,8 @@ impl SharedBackend {
         let stream = if is_direct {
             logger::info("SharedBackend", "Direct 1:1 stream path selected (no resampling).");
             let mut fade_in_frames = 0usize;
+            let mut pre_vol_buf = Vec::new();
+
             device.build_output_stream(
                 &config,
                 move |output: &mut [f32], _: &cpal::OutputCallbackInfo| {
@@ -112,6 +114,11 @@ impl SharedBackend {
                     let vol = state.get_volume();
                     let mut frames_played = 0;
 
+                    if pre_vol_buf.len() < output.len() {
+                        pre_vol_buf.resize(output.len(), 0.0);
+                    }
+
+                    let mut sample_idx = 0;
                     for frame in output.chunks_mut(out_channels) {
                         let fade_mult = if fade_in_frames > 0 {
                             let m = 1.0 - (fade_in_frames as f32 / 64.0);
@@ -125,13 +132,16 @@ impl SharedBackend {
                         for ch_sample in frame.iter_mut() {
                             match consumer.pop() {
                                 Ok(sample) => {
+                                    pre_vol_buf[sample_idx] = sample;
                                     *ch_sample = sample * vol * fade_mult;
                                 }
                                 Err(_) => {
+                                    pre_vol_buf[sample_idx] = 0.0;
                                     *ch_sample = 0.0;
                                     frame_ok = false;
                                 }
                             }
+                            sample_idx += 1;
                         }
                         if frame_ok {
                             frames_played += 1;
@@ -140,7 +150,8 @@ impl SharedBackend {
 
                     if frames_played > 0 {
                         state.current_sample_position.fetch_add(frames_played as u64, Ordering::Relaxed);
-                        state.push_visualizer_samples(output);
+                        // プリボリューム（音量非依存）の原音サンプルをビジュアライザへ供給
+                        state.push_visualizer_samples(&pre_vol_buf[..sample_idx]);
                     }
                 },
                 err_callback,
@@ -156,6 +167,7 @@ impl SharedBackend {
             let mut next_frame = vec![0.0f32; src_channels];
             let mut src_fraction = 0.0f64;
             let mut fade_in_frames = 0usize;
+            let mut pre_vol_buf = Vec::new();
 
             // 初期フレームの読み込み
             for ch in 0..src_channels {
@@ -172,23 +184,24 @@ impl SharedBackend {
                         return;
                     }
 
-                    // シーク発生時のリサンプラー境界リセットとマイクロフェードイン
                     if state.seek_trigger.swap(false, Ordering::Acquire) {
                         while consumer.pop().is_ok() {}
-                        for ch in 0..src_channels {
-                            curr_frame[ch] = 0.0;
-                            next_frame[ch] = 0.0;
-                        }
+                        curr_frame.fill(0.0);
+                        next_frame.fill(0.0);
                         src_fraction = 0.0;
                         fade_in_frames = 64;
                     }
 
                     let vol = state.get_volume();
                     let mut src_frames_consumed = 0u64;
-
-                    // コールバック内ヒープアロケーションを完全排除（スタック配列）
+                    let mut raw_interpolated_src = [0.0f32; 8];
                     let mut interpolated_src = [0.0f32; 8];
 
+                    if pre_vol_buf.len() < output.len() {
+                        pre_vol_buf.resize(output.len(), 0.0);
+                    }
+
+                    let mut sample_idx = 0;
                     for frame in output.chunks_mut(out_channels) {
                         let fade_mult = if fade_in_frames > 0 {
                             let m = 1.0 - (fade_in_frames as f32 / 64.0);
@@ -198,20 +211,22 @@ impl SharedBackend {
                             1.0
                         };
 
-                        // 線形補間サンプル値の計算
                         let frac = src_fraction as f32;
                         for ch in 0..src_channels.min(8) {
-                            interpolated_src[ch] = (curr_frame[ch] * (1.0 - frac) + next_frame[ch] * frac) * vol * fade_mult;
+                            let raw_s = curr_frame[ch] * (1.0 - frac) + next_frame[ch] * frac;
+                            raw_interpolated_src[ch] = raw_s;
+                            interpolated_src[ch] = raw_s * vol * fade_mult;
                         }
 
-                        // チャンネルマッピング
                         for (out_ch_idx, out_sample) in frame.iter_mut().enumerate() {
                             if out_ch_idx < src_channels {
+                                pre_vol_buf[sample_idx] = raw_interpolated_src[out_ch_idx];
                                 *out_sample = interpolated_src[out_ch_idx];
                             } else {
-                                // モノラル -> ステレオ、または 2ch -> マルチチャンネルの補完
+                                pre_vol_buf[sample_idx] = raw_interpolated_src[out_ch_idx % src_channels];
                                 *out_sample = interpolated_src[out_ch_idx % src_channels];
                             }
+                            sample_idx += 1;
                         }
 
                         src_fraction += resample_ratio;
@@ -227,7 +242,7 @@ impl SharedBackend {
 
                     if src_frames_consumed > 0 {
                         state.current_sample_position.fetch_add(src_frames_consumed, Ordering::Relaxed);
-                        state.push_visualizer_samples(output);
+                        state.push_visualizer_samples(&pre_vol_buf[..sample_idx]);
                     }
                 },
                 err_callback,
