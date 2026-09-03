@@ -141,7 +141,24 @@
     "reorder_track": "Alt+↑/↓: Reorder Track",
     "fav_toggle": "f: Toggle Favorite",
     "fav_history_modal": "F: Favorites & History Modal",
+    "playlist_manager": "Shift+P: Custom Playlist Management",
+    "remove_from_playlist": "Delete: Remove selected track from playlist",
     "quit": "q / Esc: Quit"
+  },
+  "custom_playlist": {
+    "modal_title": "Custom Playlist Management",
+    "empty": "No saved playlists found (Press 's' to save current playlist)",
+    "tracks_count": "{count} tracks",
+    "action_load": "Enter: Load & Play",
+    "action_save": "s: Save Current List",
+    "action_append": "a: Append Folder",
+    "action_delete": "d: Delete Playlist",
+    "action_close": "Esc: Close",
+    "save_success": "Saved playlist: {name} ({count} tracks)",
+    "save_failed": "Failed to save playlist: {error}",
+    "delete_success": "Deleted playlist: {name}",
+    "append_success": "Appended tracks: {count} added (Total {total} tracks)",
+    "track_removed": "Removed from playlist: {track}"
   },
   "library": {
     "fav_added": "★ Added to Favorites: {track}",

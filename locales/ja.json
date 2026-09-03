@@ -141,7 +141,24 @@
     "reorder_track": "Alt+↑/↓: 選択曲を上下に並び替え",
     "fav_toggle": "f: 選択曲のお気に入り登録/解除",
     "fav_history_modal": "F: お気に入り & 再生履歴一覧",
+    "playlist_manager": "Shift+P: カスタムプレイリスト管理",
+    "remove_from_playlist": "Delete: 選択曲をプレイリストから除外",
     "quit": "q / Esc: 終了"
+  },
+  "custom_playlist": {
+    "modal_title": "カスタムプレイリスト管理",
+    "empty": "保存されているプレイリストはありません ('s' キーで現在のリストを保存)",
+    "tracks_count": "{count} 曲",
+    "action_load": "Enter: 読込再生",
+    "action_save": "s: 現在のリストを保存",
+    "action_append": "a: 外部フォルダ追記",
+    "action_delete": "d: プレイリスト削除",
+    "action_close": "Esc: 閉じる",
+    "save_success": "プレイリストを保存しました: {name} ({count}曲)",
+    "save_failed": "プレイリストの保存に失敗しました: {error}",
+    "delete_success": "プレイリストを削除しました: {name}",
+    "append_success": "楽曲を追記しました: {count}曲 (全 {total}曲)",
+    "track_removed": "プレイリストから除外しました: {track}"
   },
   "library": {
     "fav_added": "★ お気に入りに追加しました: {track}",

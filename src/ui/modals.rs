@@ -97,6 +97,8 @@ impl<'a> Widget for HelpModal<'a> {
             ("Shift+S", self.i18n.t("shortcuts.export_playlist")),
             ("f", self.i18n.t("help.fav_toggle")),
             ("Shift+F", self.i18n.t("help.fav_history_modal")),
+            ("Shift+P", self.i18n.t("help.playlist_manager")),
+            ("Delete", self.i18n.t("help.remove_from_playlist")),
             ("e", self.i18n.t("shortcuts.exclusive")),
             ("E", self.i18n.t("shortcuts.devices")),
             ("g", self.i18n.t("shortcuts.equalizer")),
@@ -533,3 +535,96 @@ impl<'a> Widget for FavoritesHistoryModal<'a> {
         Paragraph::new(footer_line).render(chunks[2], buf);
     }
 }
+
+pub struct PlaylistManagerModal<'a> {
+    pub playlists: &'a [crate::playlist::CustomPlaylistInfo],
+    pub selected_index: usize,
+    pub i18n: &'a I18n,
+    pub theme: &'a Theme,
+}
+
+impl<'a> Widget for PlaylistManagerModal<'a> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let modal_area = centered_rect(70, 60, area);
+        Clear.render(modal_area, buf);
+
+        let title = format!(" [ {} ] ", self.i18n.t("custom_playlist.modal_title"));
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(self.theme.primary))
+            .style(Style::default().bg(self.theme.bg_card))
+            .title(Span::styled(
+                title,
+                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            ));
+
+        let inner_area = block.inner(modal_area);
+        block.render(modal_area, buf);
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(1),    // リスト本体
+                Constraint::Length(2), // 操作ガイド
+            ])
+            .split(inner_area);
+
+        if self.playlists.is_empty() {
+            let empty_text = format!("\n  {}", self.i18n.t("custom_playlist.empty"));
+            let empty_para = Paragraph::new(empty_text)
+                .style(Style::default().fg(self.theme.text_secondary).bg(self.theme.bg_card));
+            empty_para.render(chunks[0], buf);
+        } else {
+            let items: Vec<ListItem> = self
+                .playlists
+                .iter()
+                .enumerate()
+                .map(|(idx, pl)| {
+                    let is_selected = idx == self.selected_index;
+                    let prefix = if is_selected { " ▶ " } else { "   " };
+                    let count_str = self.i18n.t_args("custom_playlist.tracks_count", &[("count", &pl.track_count.to_string())]);
+
+                    let line = Line::from(vec![
+                        Span::styled(
+                            prefix,
+                            Style::default().fg(if is_selected { self.theme.primary } else { self.theme.text_secondary }),
+                        ),
+                        Span::styled(
+                            format!("{:<30}", pl.name),
+                            Style::default().fg(if is_selected { Color::White } else { self.theme.text_primary }).add_modifier(if is_selected { Modifier::BOLD } else { Modifier::empty() }),
+                        ),
+                        Span::styled(
+                            format!("  [{}]", count_str),
+                            Style::default().fg(self.theme.text_secondary),
+                        ),
+                    ]);
+
+                    let item_style = if is_selected {
+                        Style::default().bg(self.theme.primary).fg(Color::White)
+                    } else {
+                        Style::default().bg(self.theme.bg_card)
+                    };
+                    ListItem::new(line).style(item_style)
+                })
+                .collect();
+
+            let list = List::new(items).style(Style::default().bg(self.theme.bg_card));
+            list.render(chunks[0], buf);
+        }
+
+        let footer_line = Line::from(vec![
+            Span::styled(" [Enter] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{}  ", self.i18n.t("custom_playlist.action_load")), Style::default().fg(self.theme.text_primary)),
+            Span::styled("[s] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{}  ", self.i18n.t("custom_playlist.action_save")), Style::default().fg(self.theme.text_primary)),
+            Span::styled("[a] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{}  ", self.i18n.t("custom_playlist.action_append")), Style::default().fg(self.theme.text_primary)),
+            Span::styled("[d] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{}  ", self.i18n.t("custom_playlist.action_delete")), Style::default().fg(self.theme.text_primary)),
+            Span::styled("[Esc] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
+            Span::styled(self.i18n.t("custom_playlist.action_close"), Style::default().fg(self.theme.text_primary)),
+        ]);
+        Paragraph::new(footer_line).render(chunks[1], buf);
+    }
+}
+

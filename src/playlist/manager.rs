@@ -29,6 +29,7 @@ pub struct PlaylistManager {
     filter_query: Option<String>,
     filtered_entries: Vec<PlaylistEntry>,
     queue: VecDeque<PathBuf>,
+    is_custom: bool,
 }
 
 impl PlaylistManager {
@@ -49,6 +50,7 @@ impl PlaylistManager {
             filter_query: None,
             filtered_entries: Vec::new(),
             queue: VecDeque::new(),
+            is_custom: false,
         }
     }
 
@@ -92,6 +94,7 @@ impl PlaylistManager {
         self.cursor = 0;
         self.current_playing_index = None;
         self.current_playing_path = None;
+        self.is_custom = false;
         self.rebuild_shuffle_indices();
         self.refresh_entries();
         self.all_tracks.len()
@@ -125,9 +128,88 @@ impl PlaylistManager {
         self.cursor = 0;
         self.current_playing_index = None;
         self.current_playing_path = None;
+        self.is_custom = true;
         self.rebuild_shuffle_indices();
         self.refresh_entries();
         self.all_tracks.len()
+    }
+
+    /// 現在のプレイリストをクリアせず、指定パス（単一音声ファイルまたは外部ディレクトリ）を走査して末尾に追加する
+    pub fn append_path<P: AsRef<Path>>(&mut self, path: P) -> usize {
+        let path_ref = path.as_ref();
+        let abs_path = if path_ref.is_absolute() {
+            path_ref.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(path_ref)
+        };
+
+        let raw_paths = if abs_path.is_file() {
+            let ext = abs_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if AudioScanner::is_supported_extension(ext) {
+                vec![abs_path]
+            } else {
+                Vec::new()
+            }
+        } else {
+            AudioScanner::scan_path(&abs_path)
+        };
+
+        if raw_paths.is_empty() {
+            return 0;
+        }
+
+        let start_idx = self.all_tracks.len();
+        let mut added_count = 0;
+        for (i, p) in raw_paths.into_iter().enumerate() {
+            let canonical = std::fs::canonicalize(&p).unwrap_or(p);
+            if !self.all_tracks.iter().any(|t| t.path == canonical) {
+                let item = PlaylistItem::from_path(start_idx + i, canonical);
+                self.all_tracks.push(item);
+                added_count += 1;
+            }
+        }
+
+        if added_count > 0 {
+            self.is_custom = true;
+            self.rebuild_shuffle_indices();
+            self.refresh_entries();
+        }
+        added_count
+    }
+
+    /// 選択中のエントリを現在のプレイリストから除外する（実ファイルは削除しない）
+    pub fn remove_entry_at(&mut self, index: usize) -> Option<PlaylistItem> {
+        let target_path = match self.entries.get(index)? {
+            PlaylistEntry::AudioFile(item) => item.path.clone(),
+            _ => return None,
+        };
+
+        let removed_item = if let Some(pos) = self.all_tracks.iter().position(|t| t.path == target_path) {
+            Some(self.all_tracks.remove(pos))
+        } else {
+            None
+        };
+
+        if let Some(q_pos) = self.queue.iter().position(|p| p == &target_path) {
+            self.queue.remove(q_pos);
+        }
+
+        if self.current_playing_path.as_ref() == Some(&target_path) {
+            self.current_playing_path = None;
+            self.current_playing_index = None;
+        }
+
+        self.rebuild_shuffle_indices();
+        self.refresh_entries();
+        self.sync_current_index_with_items();
+
+        if self.cursor >= self.entries.len() && !self.entries.is_empty() {
+            self.cursor = self.entries.len() - 1;
+        }
+
+        removed_item
     }
 
     pub fn export_m3u<P: AsRef<Path>>(&self, path: P) -> std::io::Result<usize> {
@@ -142,7 +224,13 @@ impl PlaylistManager {
         self.entries.clear();
         self.items.clear();
 
-        if let Some(ref current) = self.current_dir {
+        if self.is_custom {
+            // カスタムプレイリスト（マルチフォルダ）モード: 全トラックをフラットに一覧表示
+            for item in &self.all_tracks {
+                self.items.push(item.clone());
+                self.entries.push(PlaylistEntry::AudioFile(item.clone()));
+            }
+        } else if let Some(ref current) = self.current_dir {
             // 親ディレクトリへの復帰リンク（ルートより深い場合のみ）
             if let Some(ref root) = self.root_path {
                 if current != root && current.starts_with(root) {
@@ -1036,4 +1124,32 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_playlist_append_and_remove_entry() {
+        let mut pm = PlaylistManager::new();
+        // 初期状態は空
+        assert_eq!(pm.all_tracks().len(), 0);
+
+        // 1. sample フォルダを読み込み
+        let count1 = pm.load_path("sample");
+        assert!(count1 > 0);
+        let initial_len = pm.all_tracks().len();
+
+        // 2. append_path で再度 sample フォルダを追記試行（重複はスキップされる）
+        let added = pm.append_path("sample");
+        assert_eq!(added, 0);
+        assert_eq!(pm.all_tracks().len(), initial_len);
+
+        // 3. remove_entry_at で先頭のオーディオファイルを削除
+        let first_audio_pos = pm
+            .entries()
+            .iter()
+            .position(|e| matches!(e, PlaylistEntry::AudioFile(_)))
+            .expect("Should have audio entry");
+        let removed = pm.remove_entry_at(first_audio_pos);
+        assert!(removed.is_some());
+        assert_eq!(pm.all_tracks().len(), initial_len - 1);
+    }
 }
+
