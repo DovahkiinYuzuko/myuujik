@@ -11,11 +11,57 @@ pub struct ExclusiveBackend {
     stop_signal: Arc<AtomicBool>,
     wake_event_handle: Arc<AtomicIsize>,
     thread_handle: Option<std::thread::JoinHandle<()>>,
+    actual_sample_rate: u32,
+    native_sample_rate: u32,
+}
+
+#[cfg(windows)]
+fn make_wave_format_ext(sample_rate: u32, channels: u16, is_float: bool) -> windows::Win32::Media::Audio::WAVEFORMATEXTENSIBLE {
+    use windows::core::GUID;
+    use windows::Win32::Media::Audio::*;
+
+    let guid = if is_float {
+        GUID::from_values(0x00000003, 0x0000, 0x0010, [0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71])
+    } else {
+        GUID::from_values(0x00000001, 0x0000, 0x0010, [0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71])
+    };
+    let bits = if is_float { 32 } else { 16 };
+    let bytes_per_sample = bits / 8;
+    let channel_mask = if channels == 1 { 0x4 } else { 0x3 };
+
+    WAVEFORMATEXTENSIBLE {
+        Format: WAVEFORMATEX {
+            wFormatTag: 0xFFFEu16,
+            nChannels: channels,
+            nSamplesPerSec: sample_rate,
+            nAvgBytesPerSec: sample_rate * (channels as u32) * (bytes_per_sample as u32),
+            nBlockAlign: channels * bytes_per_sample,
+            wBitsPerSample: bits,
+            cbSize: 22,
+        },
+        Samples: WAVEFORMATEXTENSIBLE_0 {
+            wValidBitsPerSample: bits,
+        },
+        dwChannelMask: channel_mask,
+        SubFormat: guid,
+    }
 }
 
 impl ExclusiveBackend {
     pub fn is_supported() -> bool {
         cfg!(windows)
+    }
+
+    pub fn actual_sample_rate(&self) -> u32 {
+        self.actual_sample_rate
+    }
+
+    pub fn native_sample_rate(&self) -> u32 {
+        self.native_sample_rate
+    }
+
+    pub fn is_bit_perfect(&self) -> bool {
+        self.actual_sample_rate == self.native_sample_rate
     }
 
     #[cfg(windows)]
@@ -41,10 +87,7 @@ impl ExclusiveBackend {
         let stop_signal_clone = Arc::clone(&stop_signal);
         let wake_event_handle_clone = Arc::clone(&wake_event_handle);
 
-        let (init_tx, init_rx) = std::sync::mpsc::channel::<Result<(), String>>();
-
-        let guid_float = GUID::from_values(0x00000003, 0x0000, 0x0010, [0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71]);
-        let guid_pcm = GUID::from_values(0x00000001, 0x0000, 0x0010, [0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71]);
+        let (init_tx, init_rx) = std::sync::mpsc::channel::<Result<(u32, bool), String>>();
 
         logger::info(
             "ExclusiveBackend",
@@ -158,72 +201,90 @@ impl ExclusiveBackend {
                     ),
                 );
 
-                // 1. IEEE Float 32-bit フォーマットの構築を試行
-                let channel_mask = if channels == 1 { 0x4 } else { 0x3 };
-                let format_ext_float = WAVEFORMATEXTENSIBLE {
-                    Format: WAVEFORMATEX {
-                        wFormatTag: 0xFFFEu16, // WAVE_FORMAT_EXTENSIBLE
-                        nChannels: channels,
-                        nSamplesPerSec: sample_rate,
-                        nAvgBytesPerSec: sample_rate * (channels as u32) * 4,
-                        nBlockAlign: channels * 4,
-                        wBitsPerSample: 32,
-                        cbSize: 22,
-                    },
-                    Samples: WAVEFORMATEXTENSIBLE_0 {
-                        wValidBitsPerSample: 32,
-                    },
-                    dwChannelMask: channel_mask,
-                    SubFormat: guid_float,
-                };
-
-                // 2. 16-bit PCM フォーマットのフォールバック定義
-                let format_ext_pcm = WAVEFORMATEXTENSIBLE {
-                    Format: WAVEFORMATEX {
-                        wFormatTag: 0xFFFEu16,
-                        nChannels: channels,
-                        nSamplesPerSec: sample_rate,
-                        nAvgBytesPerSec: sample_rate * (channels as u32) * 2,
-                        nBlockAlign: channels * 2,
-                        wBitsPerSample: 16,
-                        cbSize: 22,
-                    },
-                    Samples: WAVEFORMATEXTENSIBLE_0 {
-                        wValidBitsPerSample: 16,
-                    },
-                    dwChannelMask: channel_mask,
-                    SubFormat: guid_pcm,
-                };
-
+                // 1. ネイティブレート（Float 32-bit / PCM 16-bit）の排他サポート判定
+                let mut chosen_rate = sample_rate;
                 let mut is_float = true;
-                let mut p_format = &format_ext_float as *const _ as *const WAVEFORMATEX;
+                let mut chosen_format_ext = make_wave_format_ext(sample_rate, channels, true);
 
-                let support_check = client.IsFormatSupported(
+                let mut is_supported = client.IsFormatSupported(
                     AUDCLNT_SHAREMODE_EXCLUSIVE,
-                    p_format,
+                    &chosen_format_ext as *const _ as *const WAVEFORMATEX,
                     None,
-                );
+                ).is_ok();
 
-                // Float非対応の場合、16-bit PCM フォーマットを試行
-                if support_check.is_err() {
-                    logger::warn("ExclusiveBackend", "IEEE Float 32-bit not supported directly, trying 16-bit PCM...");
-                    is_float = false;
-                    p_format = &format_ext_pcm as *const _ as *const WAVEFORMATEX;
-
-                    let pcm_check = client.IsFormatSupported(
+                if !is_supported {
+                    let pcm_format = make_wave_format_ext(sample_rate, channels, false);
+                    if client.IsFormatSupported(
                         AUDCLNT_SHAREMODE_EXCLUSIVE,
-                        p_format,
+                        &pcm_format as *const _ as *const WAVEFORMATEX,
                         None,
-                    );
-                    if pcm_check.is_err() {
-                        let err_msg = format!("Device does not support requested format in Exclusive mode: {:?}", pcm_check);
-                        logger::error("ExclusiveBackend", &err_msg);
-                        let _ = init_tx.send(Err(err_msg));
-                        CoUninitialize();
-                        return;
+                    ).is_ok() {
+                        is_supported = true;
+                        is_float = false;
+                        chosen_format_ext = pcm_format;
                     }
                 }
 
+                // 2. ネイティブレート非対応時の自動リサンプリングターゲット探索
+                if !is_supported {
+                    logger::warn(
+                        "ExclusiveBackend",
+                        &format!(
+                            "Device does not support native rate {}Hz directly in Exclusive mode. Probing fallback rates...",
+                            sample_rate
+                        ),
+                    );
+
+                    // 音源に近い順・一般的なハイレゾ/CD音質順に候補レートを走査
+                    let candidates = [192000, 96000, 48000, 44100, 88200, 176400];
+                    for &cand in &candidates {
+                        if cand == sample_rate {
+                            continue;
+                        }
+                        let fmt_fl = make_wave_format_ext(cand, channels, true);
+                        if client.IsFormatSupported(
+                            AUDCLNT_SHAREMODE_EXCLUSIVE,
+                            &fmt_fl as *const _ as *const WAVEFORMATEX,
+                            None,
+                        ).is_ok() {
+                            chosen_rate = cand;
+                            is_float = true;
+                            chosen_format_ext = fmt_fl;
+                            is_supported = true;
+                            logger::info(
+                                "ExclusiveBackend",
+                                &format!("Found supported Exclusive fallback rate: {}Hz (Float 32-bit)", cand),
+                            );
+                            break;
+                        }
+                        let fmt_pcm = make_wave_format_ext(cand, channels, false);
+                        if client.IsFormatSupported(
+                            AUDCLNT_SHAREMODE_EXCLUSIVE,
+                            &fmt_pcm as *const _ as *const WAVEFORMATEX,
+                            None,
+                        ).is_ok() {
+                            chosen_rate = cand;
+                            is_float = false;
+                            chosen_format_ext = fmt_pcm;
+                            is_supported = true;
+                            logger::info(
+                                "ExclusiveBackend",
+                                &format!("Found supported Exclusive fallback rate: {}Hz (PCM 16-bit)", cand),
+                            );
+                            break;
+                        }
+                    }
+                }
+
+                if !is_supported {
+                    let err_msg = format!("Device does not support any exclusive format for {} channels", channels);
+                    logger::error("ExclusiveBackend", &err_msg);
+                    let _ = init_tx.send(Err(err_msg));
+                    CoUninitialize();
+                    return;
+                }
+
+                let p_format = &chosen_format_ext as *const _ as *const WAVEFORMATEX;
                 let mut period_to_use = default_period;
                 let mut init_res = client.Initialize(
                     AUDCLNT_SHAREMODE_EXCLUSIVE,
@@ -238,7 +299,7 @@ impl ExclusiveBackend {
                 if let Err(ref e) = init_res {
                     if e.code() == AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED {
                         if let Ok(aligned_frames) = client.GetBufferSize() {
-                            period_to_use = ((aligned_frames as f64 / sample_rate as f64 * 10_000_000.0) + 0.5) as i64;
+                            period_to_use = ((aligned_frames as f64 / chosen_rate as f64 * 10_000_000.0) + 0.5) as i64;
                             logger::info(
                                 "ExclusiveBackend",
                                 &format!("Re-aligning buffer size to {} frames (period={})", aligned_frames, period_to_use),
@@ -342,8 +403,18 @@ impl ExclusiveBackend {
                     return;
                 }
 
-                logger::info("ExclusiveBackend", "Exclusive mode stream started successfully.");
-                let _ = init_tx.send(Ok(()));
+                let is_bit_perfect = chosen_rate == sample_rate;
+                logger::info(
+                    "ExclusiveBackend",
+                    &format!(
+                        "Exclusive mode stream started successfully: native={}Hz, actual={}Hz, bit_perfect={}",
+                        sample_rate, chosen_rate, is_bit_perfect
+                    ),
+                );
+                let _ = init_tx.send(Ok((chosen_rate, is_bit_perfect)));
+
+                let mut resampler = crate::audio::resampler::AudioResampler::new(sample_rate, chosen_rate, channels);
+                let mut resampled_fifo = std::collections::VecDeque::<f32>::with_capacity(total_buffer_samples * 2);
 
                 // イベントドリブン WASAPI 再生ループ（タイムアウト50ms＋即時停止検知）
                 while !stop_signal_clone.load(Ordering::Relaxed) {
@@ -361,6 +432,8 @@ impl ExclusiveBackend {
 
                     if state.seek_trigger.swap(false, Ordering::Acquire) {
                         while consumer.pop().is_ok() {}
+                        resampled_fifo.clear();
+                        resampler.reset();
                     }
 
                     if let Ok(p_data) = render_client.GetBuffer(buffer_frame_count) {
@@ -368,25 +441,60 @@ impl ExclusiveBackend {
                             let slice = std::slice::from_raw_parts_mut(p_data as *mut f32, total_buffer_samples);
                             if is_active {
                                 let mut frames_read = 0;
-                                for frame in slice.chunks_mut(ch_count) {
-                                    let mut frame_ok = true;
-                                    for ch_sample in frame.iter_mut() {
-                                        match consumer.pop() {
-                                            Ok(s) => {
-                                                *ch_sample = s * vol;
-                                            }
-                                            Err(_) => {
-                                                *ch_sample = 0.0;
-                                                frame_ok = false;
+                                if resampler.is_resampling_needed() {
+                                    while resampled_fifo.len() < total_buffer_samples {
+                                        let mut chunk = Vec::with_capacity(256 * ch_count);
+                                        for _ in 0..(256 * ch_count) {
+                                            match consumer.pop() {
+                                                Ok(s) => chunk.push(s),
+                                                Err(_) => break,
                                             }
                                         }
+                                        if chunk.is_empty() {
+                                            break;
+                                        }
+                                        let out_chunk = resampler.process(&chunk);
+                                        for s in out_chunk {
+                                            resampled_fifo.push_back(s);
+                                        }
                                     }
-                                    if frame_ok {
-                                        frames_read += 1;
+
+                                    for frame in slice.chunks_mut(ch_count) {
+                                        let has_sample = resampled_fifo.len() >= ch_count;
+                                        for ch_sample in frame.iter_mut() {
+                                            let s = resampled_fifo.pop_front().unwrap_or(0.0);
+                                            *ch_sample = s * vol;
+                                        }
+                                        if has_sample {
+                                            frames_read += 1;
+                                        }
+                                    }
+                                } else {
+                                    for frame in slice.chunks_mut(ch_count) {
+                                        let mut frame_ok = true;
+                                        for ch_sample in frame.iter_mut() {
+                                            match consumer.pop() {
+                                                Ok(s) => {
+                                                    *ch_sample = s * vol;
+                                                }
+                                                Err(_) => {
+                                                    *ch_sample = 0.0;
+                                                    frame_ok = false;
+                                                }
+                                            }
+                                        }
+                                        if frame_ok {
+                                            frames_read += 1;
+                                        }
                                     }
                                 }
                                 if frames_read > 0 {
-                                    state.current_sample_position.fetch_add(frames_read as u64, Ordering::Relaxed);
+                                    let native_frames = if resampler.is_resampling_needed() {
+                                        ((frames_read as f64 * sample_rate as f64 / chosen_rate as f64) + 0.5) as u64
+                                    } else {
+                                        frames_read as u64
+                                    };
+                                    state.current_sample_position.fetch_add(native_frames, Ordering::Relaxed);
                                     state.push_visualizer_samples(slice);
                                 }
                             } else {
@@ -396,26 +504,62 @@ impl ExclusiveBackend {
                             let slice = std::slice::from_raw_parts_mut(p_data as *mut i16, total_buffer_samples);
                             if is_active {
                                 let mut frames_read = 0;
-                                for frame in slice.chunks_mut(ch_count) {
-                                    let mut frame_ok = true;
-                                    for ch_sample in frame.iter_mut() {
-                                        match consumer.pop() {
-                                            Ok(s) => {
-                                                let scaled = (s * vol * 32767.0).clamp(-32768.0, 32767.0);
-                                                *ch_sample = scaled as i16;
-                                            }
-                                            Err(_) => {
-                                                *ch_sample = 0;
-                                                frame_ok = false;
+                                if resampler.is_resampling_needed() {
+                                    while resampled_fifo.len() < total_buffer_samples {
+                                        let mut chunk = Vec::with_capacity(256 * ch_count);
+                                        for _ in 0..(256 * ch_count) {
+                                            match consumer.pop() {
+                                                Ok(s) => chunk.push(s),
+                                                Err(_) => break,
                                             }
                                         }
+                                        if chunk.is_empty() {
+                                            break;
+                                        }
+                                        let out_chunk = resampler.process(&chunk);
+                                        for s in out_chunk {
+                                            resampled_fifo.push_back(s);
+                                        }
                                     }
-                                    if frame_ok {
-                                        frames_read += 1;
+
+                                    for frame in slice.chunks_mut(ch_count) {
+                                        let has_sample = resampled_fifo.len() >= ch_count;
+                                        for ch_sample in frame.iter_mut() {
+                                            let s = resampled_fifo.pop_front().unwrap_or(0.0);
+                                            let scaled = (s * vol * 32767.0).clamp(-32768.0, 32767.0);
+                                            *ch_sample = scaled as i16;
+                                        }
+                                        if has_sample {
+                                            frames_read += 1;
+                                        }
+                                    }
+                                } else {
+                                    for frame in slice.chunks_mut(ch_count) {
+                                        let mut frame_ok = true;
+                                        for ch_sample in frame.iter_mut() {
+                                            match consumer.pop() {
+                                                Ok(s) => {
+                                                    let scaled = (s * vol * 32767.0).clamp(-32768.0, 32767.0);
+                                                    *ch_sample = scaled as i16;
+                                                }
+                                                Err(_) => {
+                                                    *ch_sample = 0;
+                                                    frame_ok = false;
+                                                }
+                                            }
+                                        }
+                                        if frame_ok {
+                                            frames_read += 1;
+                                        }
                                     }
                                 }
                                 if frames_read > 0 {
-                                    state.current_sample_position.fetch_add(frames_read as u64, Ordering::Relaxed);
+                                    let native_frames = if resampler.is_resampling_needed() {
+                                        ((frames_read as f64 * sample_rate as f64 / chosen_rate as f64) + 0.5) as u64
+                                    } else {
+                                        frames_read as u64
+                                    };
+                                    state.current_sample_position.fetch_add(native_frames, Ordering::Relaxed);
                                     let mut f32_chunk = [0.0f32; 1024];
                                     for chunk in slice.chunks(f32_chunk.len()) {
                                         for (out_s, &in_s) in f32_chunk.iter_mut().zip(chunk.iter()) {
@@ -442,12 +586,21 @@ impl ExclusiveBackend {
         });
 
         match init_rx.recv() {
-            Ok(Ok(())) => {
+            Ok(Ok((actual_sample_rate, _))) => {
+                logger::info(
+                    "ExclusiveBackend",
+                    &format!(
+                        "ExclusiveBackend initialized: native={}Hz, actual={}Hz",
+                        sample_rate, actual_sample_rate
+                    ),
+                );
                 Ok(Self {
                     is_running,
                     stop_signal,
                     wake_event_handle,
                     thread_handle: Some(thread_handle),
+                    actual_sample_rate,
+                    native_sample_rate: sample_rate,
                 })
             }
             Ok(Err(e)) => Err(e.into()),
@@ -519,5 +672,52 @@ mod tests {
         } else {
             assert!(!ExclusiveBackend::is_supported());
         }
+    }
+
+    #[test]
+    fn test_exclusive_backend_rate_accessors() {
+        let backend = ExclusiveBackend {
+            is_running: Arc::new(AtomicBool::new(false)),
+            stop_signal: Arc::new(AtomicBool::new(false)),
+            wake_event_handle: Arc::new(AtomicIsize::new(0)),
+            thread_handle: None,
+            actual_sample_rate: 48000,
+            native_sample_rate: 48000,
+        };
+        assert_eq!(backend.actual_sample_rate(), 48000);
+        assert_eq!(backend.native_sample_rate(), 48000);
+        assert!(backend.is_bit_perfect());
+
+        let resampled_backend = ExclusiveBackend {
+            is_running: Arc::new(AtomicBool::new(false)),
+            stop_signal: Arc::new(AtomicBool::new(false)),
+            wake_event_handle: Arc::new(AtomicIsize::new(0)),
+            thread_handle: None,
+            actual_sample_rate: 48000,
+            native_sample_rate: 44100,
+        };
+        assert_eq!(resampled_backend.actual_sample_rate(), 48000);
+        assert_eq!(resampled_backend.native_sample_rate(), 44100);
+        assert!(!resampled_backend.is_bit_perfect());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_make_wave_format_ext_properties() {
+        let fmt_float = make_wave_format_ext(48000, 2, true);
+        let rate_float = fmt_float.Format.nSamplesPerSec;
+        let channels_float = fmt_float.Format.nChannels;
+        let bits_float = fmt_float.Format.wBitsPerSample;
+        assert_eq!(rate_float, 48000);
+        assert_eq!(channels_float, 2);
+        assert_eq!(bits_float, 32);
+
+        let fmt_pcm = make_wave_format_ext(96000, 2, false);
+        let rate_pcm = fmt_pcm.Format.nSamplesPerSec;
+        let channels_pcm = fmt_pcm.Format.nChannels;
+        let bits_pcm = fmt_pcm.Format.wBitsPerSample;
+        assert_eq!(rate_pcm, 96000);
+        assert_eq!(channels_pcm, 2);
+        assert_eq!(bits_pcm, 16);
     }
 }

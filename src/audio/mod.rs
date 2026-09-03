@@ -11,11 +11,13 @@ pub mod thumbnail;
 pub mod lyrics;
 pub mod fingerprint;
 pub mod lyrics_fetcher;
+pub mod resampler;
 
 pub use decoder::{AudioDecoder, CoverArt, TrackMetadata};
 pub use engine::{AudioEngine, EngineCommand};
 pub use exclusive_wasapi::ExclusiveBackend;
 pub use mock::MockAudioBackend;
+pub use resampler::AudioResampler;
 pub use ring_buffer::{create_ring_buffer, SharedAudioState};
 pub use shared::SharedBackend;
 pub use traits::{AudioDeviceInfo, AudioOutputBackend};

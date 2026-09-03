@@ -729,7 +729,16 @@ impl AudioEngine {
                 Ok(b) => {
                     logger::info("AudioEngine", "ExclusiveBackend created and verified.");
                     is_fallback.store(false, Ordering::Relaxed);
-                    *active_mode.write().unwrap() = "Exclusive (Bit-Perfect)".to_string();
+                    let mode_str = if b.is_bit_perfect() {
+                        "Exclusive (Bit-Perfect)".to_string()
+                    } else {
+                        format!(
+                            "Exclusive (Resampled: {:.1}k -> {:.1}k)",
+                            sample_rate as f64 / 1000.0,
+                            b.actual_sample_rate() as f64 / 1000.0
+                        )
+                    };
+                    *active_mode.write().unwrap() = mode_str;
                     return Ok((Box::new(b), None));
                 }
                 Err(e) => {
