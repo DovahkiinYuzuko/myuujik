@@ -65,13 +65,13 @@ jobs:
         shell: pwsh
         run: |
           if (!(Test-Path dist)) { New-Item -ItemType Directory -Path dist }
-          Compress-Archive -Path "target/${{ matrix.target }}/release/myuujik.exe", "README.md", "LICENSE.MIT" -DestinationPath "dist/myuujik-${{ matrix.artifact_name }}.zip"
+          Compress-Archive -Path "target/${{ matrix.target }}/release/myuujik.exe", "README.md", "LICENSE.MIT", "NOTICE.md" -DestinationPath "dist/myuujik-${{ matrix.artifact_name }}.zip"
 
       - name: Create portable archive (Unix)
         if: runner.os != 'Windows'
         run: |
           mkdir -p dist
-          tar -czvf "dist/myuujik-${{ matrix.artifact_name }}.tar.gz" -C "target/${{ matrix.target }}/release" myuujik
+          tar -czvf "dist/myuujik-${{ matrix.artifact_name }}.tar.gz" -C "target/${{ matrix.target }}/release" myuujik -C "${{ github.workspace }}" README.md LICENSE.MIT NOTICE.md
 
       - name: Upload temporary build artifacts
         uses: actions/upload-artifact@v4
