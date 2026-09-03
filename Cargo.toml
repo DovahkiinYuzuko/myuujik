@@ -5,6 +5,22 @@ edition = "2021"
 description = "High-quality, ultra-lightweight TUI audio player in Rust"
 license = "MIT"
 
+# ==========================================
+# cargo-packager によるマルチOSインストーラー生成設定
+# ==========================================
+[package.metadata.packager]
+product-name = "myuujik"
+identifier = "com.YuzukoUnderson.myuujik"
+authors = ["Yuzuko Underson"]
+description = "High-quality, ultra-lightweight TUI audio player in Rust"
+copyright = "Copyright (c) 2026 Yuzuko Underson"
+out-dir = "dist"
+
+[package.metadata.packager.targets]
+msi = { }
+deb = { depends = ["libasound2"] }
+dmg = { }
+
 [dependencies]
 # Audio Decoding & Metadata
 symphonia = { version = "0.5", features = ["all"] }
@@ -79,19 +95,3 @@ codegen-units = 16
 
 panic = "abort"
 strip = true
-
-# ==========================================
-# cargo-packager によるマルチOSインストーラー生成設定
-# ==========================================
-[package.metadata.packager]
-product-name = "myuujik"
-identifier = "com.YuzukoUnderson.myuujik"
-authors = ["Yuzuko Underson"]
-description = "High-quality, ultra-lightweight TUI audio player in Rust"
-copyright = "Copyright (c) 2026 Yuzuko Underson"
-out-dir = "dist"
-
-[package.metadata.packager.targets]
-msi = { }
-deb = { depends = ["libasound2"] }
-dmg = { }
