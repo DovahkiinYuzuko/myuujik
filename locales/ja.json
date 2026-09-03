@@ -158,8 +158,7 @@
     "save_failed": "プレイリストの保存に失敗しました: {error}",
     "delete_success": "プレイリストを削除しました: {name}",
     "append_success": "楽曲を追記しました: {count}曲 (全 {total}曲)",
-    "track_removed": "プレイリストから除外しました: {track}",
-    "prompt_name": "プレイリスト名を入力 (Enter: 保存, Esc: 取消): "
+    "track_removed": "プレイリストから除外しました: {track}"
   },
   "library": {
     "fav_added": "★ お気に入りに追加しました: {track}",

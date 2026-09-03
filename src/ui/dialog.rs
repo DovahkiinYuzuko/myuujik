@@ -111,3 +111,104 @@ fn pick_folder_linux() -> Option<PathBuf> {
 
     None
 }
+
+/// OS標準の「名前を付けて保存」ダイアログを開き、指定された M3U8 ファイルの保存先パスを返す
+pub fn save_playlist_dialog(default_name: &str) -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        save_playlist_windows(default_name)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        save_playlist_macos(default_name)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        save_playlist_linux(default_name)
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    {
+        let _ = default_name;
+        None
+    }
+}
+
+#[cfg(windows)]
+fn save_playlist_windows(default_name: &str) -> Option<PathBuf> {
+    use windows::Win32::UI::Shell::{FileSaveDialog, IFileSaveDialog, SIGDN_FILESYSPATH};
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_INPROC_SERVER,
+        COINIT_APARTMENTTHREADED,
+    };
+    use windows::Win32::Foundation::HWND;
+    use windows::core::HSTRING;
+
+    unsafe {
+        let com_inited = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
+
+        let result = (|| -> Option<PathBuf> {
+            let dialog: IFileSaveDialog =
+                CoCreateInstance(&FileSaveDialog, None, CLSCTX_INPROC_SERVER).ok()?;
+
+            let def_name_hstring = HSTRING::from(default_name);
+            let _ = dialog.SetFileName(&def_name_hstring);
+
+            let def_ext = HSTRING::from("m3u8");
+            let _ = dialog.SetDefaultExtension(&def_ext);
+
+            // 親ウィンドウなし（デスクトップ）でダイアログをモーダル表示
+            dialog.Show(HWND(std::ptr::null_mut())).ok()?;
+
+            let item = dialog.GetResult().ok()?;
+            let name = item.GetDisplayName(SIGDN_FILESYSPATH).ok()?;
+            let path_str = name.to_string().ok()?;
+            CoTaskMemFree(Some(name.0 as _));
+
+            if path_str.trim().is_empty() {
+                None
+            } else {
+                Some(PathBuf::from(path_str))
+            }
+        })();
+
+        if com_inited {
+            CoUninitialize();
+        }
+
+        result
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn save_playlist_macos(default_name: &str) -> Option<PathBuf> {
+    let script = format!(r#"POSIX path of (choose file name with prompt "Save Playlist" default name "{}")"#, default_name);
+    let output = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !s.is_empty() {
+            return Some(PathBuf::from(s));
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn save_playlist_linux(default_name: &str) -> Option<PathBuf> {
+    if let Ok(output) = std::process::Command::new("zenity")
+        .args(["--file-selection", "--save", "--confirm-overwrite", &format!("--filename={}", default_name)])
+        .output()
+    {
+        if output.status.success() {
+            let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !s.is_empty() {
+                return Some(PathBuf::from(s));
+            }
+        }
+    }
+    None
+}

@@ -26,6 +26,12 @@ use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SavePlaylistTarget {
+    Export,
+    CustomPlaylist,
+}
+
 pub struct App {
     pub engine: AudioEngine,
     pub playlist: PlaylistManager,
@@ -68,6 +74,7 @@ pub struct App {
     pub library: LibraryManager,
     pub storage: crate::playlist::PlaylistStorage,
     pub folder_append_rx: Option<Receiver<Option<PathBuf>>>,
+    pub save_dialog_rx: Option<Receiver<Option<(PathBuf, SavePlaylistTarget)>>>,
 }
 
 impl App {
@@ -152,6 +159,7 @@ impl App {
             library: LibraryManager::new(),
             storage: crate::playlist::PlaylistStorage::new(),
             folder_append_rx: None,
+            save_dialog_rx: None,
         };
 
         app.engine.set_equalizer_enabled(app.eq_enabled);
@@ -500,35 +508,73 @@ impl App {
         }
     }
 
-    /// 現在のプレイリストをカレントディレクトリに myuujik_playlist.m3u8 としてエクスポート保存する
-    pub fn export_current_playlist(&mut self) {
-        let target_dir = self
-            .playlist
-            .current_dir()
-            .or_else(|| self.playlist.root_path())
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
-
-        let export_path = target_dir.join("myuujik_playlist.m3u8");
-        let track_count = self.playlist.all_tracks().len();
-
-        if track_count == 0 {
+    /// OS標準の「名前を付けて保存」ダイアログをバックグラウンドスレッドで起動する
+    pub fn open_save_playlist_dialog(&mut self, target: SavePlaylistTarget) {
+        if self.save_dialog_rx.is_some() {
             return;
         }
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.save_dialog_rx = Some(rx);
 
-        match self.playlist.export_m3u(&export_path) {
-            Ok(count) => {
-                let msg = self.i18n.t_args("playlist.exported", &[
-                    ("path", "myuujik_playlist.m3u8"),
-                    ("count", &count.to_string()),
-                ]);
-                self.lyrics_toast = Some((msg, Instant::now(), false));
+        let timestamp = crate::logger::epoch_secs_to_utc_ymd(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        );
+        let default_name = match target {
+            SavePlaylistTarget::Export => "myuujik_playlist.m3u8".to_string(),
+            SavePlaylistTarget::CustomPlaylist => {
+                format!(
+                    "Playlist_{:04}{:02}{:02}_{:02}{:02}.m3u8",
+                    timestamp.0, timestamp.1, timestamp.2, timestamp.3, timestamp.4
+                )
             }
-            Err(e) => {
-                let msg = self.i18n.t_args("playlist.export_failed", &[
-                    ("error", &e.to_string()),
-                ]);
-                self.lyrics_toast = Some((msg, Instant::now(), true));
+        };
+
+        std::thread::spawn(move || {
+            let res = crate::ui::dialog::save_playlist_dialog(&default_name);
+            let _ = tx.send(res.map(|p| (p, target)));
+        });
+    }
+
+    /// プレイリスト保存ダイアログの結果をポーリングしてファイル書き込みを行う
+    pub fn check_save_playlist_result(&mut self) {
+        if let Some(ref rx) = self.save_dialog_rx {
+            if let Ok(res) = rx.try_recv() {
+                self.save_dialog_rx = None;
+                if let Some((path, target)) = res {
+                    crate::logger::info("App", &format!("Save playlist confirmed: {:?}", path));
+                    let file_stem = path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("Playlist")
+                        .to_string();
+                    let count = self.playlist.all_tracks().len();
+                    let base_dir = path.parent();
+                    let m3u_str = crate::playlist::m3u::export_m3u(self.playlist.all_tracks(), base_dir);
+                    match std::fs::write(&path, m3u_str) {
+                        Ok(_) => {
+                            let msg = self.i18n.t_args("custom_playlist.save_success", &[
+                                ("name", &file_stem),
+                                ("count", &count.to_string()),
+                            ]);
+                            self.lyrics_toast = Some((msg, Instant::now(), false));
+
+                            if target == SavePlaylistTarget::CustomPlaylist {
+                                let updated = self.storage.list_playlists();
+                                let new_idx = updated.iter().position(|p| p.name == file_stem).unwrap_or(0);
+                                self.hfsm.modal = ModalState::PlaylistManager { selected_index: new_idx };
+                            }
+                        }
+                        Err(e) => {
+                            let msg = self.i18n.t_args("custom_playlist.save_failed", &[
+                                ("error", &e.to_string()),
+                            ]);
+                            self.lyrics_toast = Some((msg, Instant::now(), true));
+                        }
+                    }
+                }
             }
         }
     }
@@ -745,92 +791,10 @@ impl App {
                         _ => {}
                     }
                 }
-                ModalState::PlaylistManager {
-                    selected_index,
-                    is_naming,
-                    name_input,
-                } => {
+                ModalState::PlaylistManager { selected_index } => {
                     let mut idx = *selected_index;
-                    let mut naming = *is_naming;
-                    let mut input = name_input.clone();
                     let playlists = self.storage.list_playlists();
                     let len = playlists.len();
-
-                    if naming {
-                        match key.code {
-                            KeyCode::Esc => {
-                                naming = false;
-                                input.clear();
-                                self.hfsm.modal = ModalState::PlaylistManager {
-                                    selected_index: idx,
-                                    is_naming: naming,
-                                    name_input: input,
-                                };
-                            }
-                            KeyCode::Enter => {
-                                let timestamp = crate::logger::epoch_secs_to_utc_ymd(
-                                    std::time::SystemTime::now()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .unwrap_or_default()
-                                        .as_secs(),
-                                );
-                                let default_name = format!(
-                                    "Playlist_{:04}{:02}{:02}_{:02}{:02}",
-                                    timestamp.0, timestamp.1, timestamp.2, timestamp.3, timestamp.4
-                                );
-                                let final_name = if input.trim().is_empty() {
-                                    default_name
-                                } else {
-                                    input.trim().to_string()
-                                };
-
-                                match self.storage.save_playlist(&final_name, self.playlist.all_tracks()) {
-                                    Ok(_) => {
-                                        let msg = self.i18n.t_args("custom_playlist.save_success", &[
-                                            ("name", &final_name),
-                                            ("count", &self.playlist.all_tracks().len().to_string()),
-                                        ]);
-                                        self.lyrics_toast = Some((msg, Instant::now(), false));
-                                    }
-                                    Err(e) => {
-                                        let msg = self.i18n.t_args("custom_playlist.save_failed", &[
-                                            ("error", &e.to_string()),
-                                        ]);
-                                        self.lyrics_toast = Some((msg, Instant::now(), true));
-                                    }
-                                }
-                                naming = false;
-                                input.clear();
-                                let updated_playlists = self.storage.list_playlists();
-                                if let Some(new_pos) = updated_playlists.iter().position(|p| p.name == final_name) {
-                                    idx = new_pos;
-                                }
-                                self.hfsm.modal = ModalState::PlaylistManager {
-                                    selected_index: idx,
-                                    is_naming: naming,
-                                    name_input: input,
-                                };
-                            }
-                            KeyCode::Backspace => {
-                                input.pop();
-                                self.hfsm.modal = ModalState::PlaylistManager {
-                                    selected_index: idx,
-                                    is_naming: naming,
-                                    name_input: input,
-                                };
-                            }
-                            KeyCode::Char(c) => {
-                                input.push(c);
-                                self.hfsm.modal = ModalState::PlaylistManager {
-                                    selected_index: idx,
-                                    is_naming: naming,
-                                    name_input: input,
-                                };
-                            }
-                            _ => {}
-                        }
-                        return;
-                    }
 
                     match key.code {
                         KeyCode::Esc | KeyCode::Char('q') => {
@@ -842,11 +806,7 @@ impl App {
                             } else if len > 0 {
                                 idx = len - 1;
                             }
-                            self.hfsm.modal = ModalState::PlaylistManager {
-                                selected_index: idx,
-                                is_naming: false,
-                                name_input: String::new(),
-                            };
+                            self.hfsm.modal = ModalState::PlaylistManager { selected_index: idx };
                         }
                         KeyCode::Down | KeyCode::Char('j') => {
                             if len > 0 {
@@ -856,11 +816,7 @@ impl App {
                                     idx = 0;
                                 }
                             }
-                            self.hfsm.modal = ModalState::PlaylistManager {
-                                selected_index: idx,
-                                is_naming: false,
-                                name_input: String::new(),
-                            };
+                            self.hfsm.modal = ModalState::PlaylistManager { selected_index: idx };
                         }
                         KeyCode::Enter => {
                             if let Some(target) = playlists.get(idx) {
@@ -874,11 +830,7 @@ impl App {
                             }
                         }
                         KeyCode::Char('s') | KeyCode::Char('S') => {
-                            self.hfsm.modal = ModalState::PlaylistManager {
-                                selected_index: idx,
-                                is_naming: true,
-                                name_input: String::new(),
-                            };
+                            self.open_save_playlist_dialog(SavePlaylistTarget::CustomPlaylist);
                         }
                         KeyCode::Char('a') | KeyCode::Char('A') => {
                             self.open_folder_append();
@@ -895,11 +847,7 @@ impl App {
                                 } else if new_len == 0 {
                                     idx = 0;
                                 }
-                                self.hfsm.modal = ModalState::PlaylistManager {
-                                    selected_index: idx,
-                                    is_naming: false,
-                                    name_input: String::new(),
-                                };
+                                self.hfsm.modal = ModalState::PlaylistManager { selected_index: idx };
                             }
                         }
                         _ => {}
@@ -1048,7 +996,7 @@ impl App {
                 self.playlist.toggle_shuffle();
             }
             KeyCode::Char('S') => {
-                self.export_current_playlist();
+                self.open_save_playlist_dialog(SavePlaylistTarget::Export);
             }
             KeyCode::Char('/') => {
                 self.is_searching = true;
@@ -1098,11 +1046,7 @@ impl App {
                 });
             }
             KeyCode::Char('P') => {
-                self.hfsm.open_modal(ModalState::PlaylistManager {
-                    selected_index: 0,
-                    is_naming: false,
-                    name_input: String::new(),
-                });
+                self.hfsm.open_modal(ModalState::PlaylistManager { selected_index: 0 });
             }
             KeyCode::Delete => {
                 if let Some(removed) = self.playlist.remove_entry_at(self.playlist.cursor()) {
@@ -1383,6 +1327,7 @@ impl App {
             }
             self.check_folder_picker_result();
             self.check_folder_append_result();
+            self.check_save_playlist_result();
             self.check_lyrics_fetch_result();
             if let Ok(term_size) = terminal.size() {
                 let right_width = (term_size.width as f32 * 0.62).round() as usize;
@@ -1619,17 +1564,11 @@ impl App {
                         };
                         f.render_widget(m, size);
                     }
-                    ModalState::PlaylistManager {
-                        selected_index,
-                        is_naming,
-                        name_input,
-                    } => {
+                    ModalState::PlaylistManager { selected_index } => {
                         let playlists = self.storage.list_playlists();
                         let m = crate::ui::modals::PlaylistManagerModal {
                             playlists: &playlists,
                             selected_index: *selected_index,
-                            is_naming: *is_naming,
-                            name_input,
                             i18n: &self.i18n,
                             theme: &self.theme,
                         };
@@ -1745,14 +1684,7 @@ mod tests {
 
             // 9. Shift+P キーでプレイリスト管理モーダルオープン、Escでクローズ
             app.handle_key_event(KeyEvent::new(KeyCode::Char('P'), KeyModifiers::NONE));
-            assert_eq!(
-                app.hfsm.modal,
-                ModalState::PlaylistManager {
-                    selected_index: 0,
-                    is_naming: false,
-                    name_input: String::new(),
-                }
-            );
+            assert_eq!(app.hfsm.modal, ModalState::PlaylistManager { selected_index: 0 });
             app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
             assert_eq!(app.hfsm.modal, ModalState::None);
 
