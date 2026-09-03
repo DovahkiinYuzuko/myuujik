@@ -158,7 +158,8 @@
     "save_failed": "Failed to save playlist: {error}",
     "delete_success": "Deleted playlist: {name}",
     "append_success": "Appended tracks: {count} added (Total {total} tracks)",
-    "track_removed": "Removed from playlist: {track}"
+    "track_removed": "Removed from playlist: {track}",
+    "prompt_name": "Enter playlist name (Enter: Save, Esc: Cancel): "
   },
   "library": {
     "fav_added": "★ Added to Favorites: {track}",

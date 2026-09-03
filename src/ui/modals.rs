@@ -539,6 +539,8 @@ impl<'a> Widget for FavoritesHistoryModal<'a> {
 pub struct PlaylistManagerModal<'a> {
     pub playlists: &'a [crate::playlist::CustomPlaylistInfo],
     pub selected_index: usize,
+    pub is_naming: bool,
+    pub name_input: &'a str,
     pub i18n: &'a I18n,
     pub theme: &'a Theme,
 }
@@ -612,18 +614,31 @@ impl<'a> Widget for PlaylistManagerModal<'a> {
             list.render(chunks[0], buf);
         }
 
-        let footer_line = Line::from(vec![
-            Span::styled(" [Enter] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("{}  ", self.i18n.t("custom_playlist.action_load")), Style::default().fg(self.theme.text_primary)),
-            Span::styled("[s] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("{}  ", self.i18n.t("custom_playlist.action_save")), Style::default().fg(self.theme.text_primary)),
-            Span::styled("[a] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("{}  ", self.i18n.t("custom_playlist.action_append")), Style::default().fg(self.theme.text_primary)),
-            Span::styled("[d] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("{}  ", self.i18n.t("custom_playlist.action_delete")), Style::default().fg(self.theme.text_primary)),
-            Span::styled("[Esc] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
-            Span::styled(self.i18n.t("custom_playlist.action_close"), Style::default().fg(self.theme.text_primary)),
-        ]);
+        let footer_line = if self.is_naming {
+            Line::from(vec![
+                Span::styled(
+                    format!("  {} ", self.i18n.t("custom_playlist.prompt_name")),
+                    Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("{}_", self.name_input),
+                    Style::default().fg(Color::White).bg(Color::Rgb(50, 50, 80)).add_modifier(Modifier::BOLD),
+                ),
+            ])
+        } else {
+            Line::from(vec![
+                Span::styled(" [Enter] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("{}  ", self.i18n.t("custom_playlist.action_load")), Style::default().fg(self.theme.text_primary)),
+                Span::styled("[s] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("{}  ", self.i18n.t("custom_playlist.action_save")), Style::default().fg(self.theme.text_primary)),
+                Span::styled("[a] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("{}  ", self.i18n.t("custom_playlist.action_append")), Style::default().fg(self.theme.text_primary)),
+                Span::styled("[d] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("{}  ", self.i18n.t("custom_playlist.action_delete")), Style::default().fg(self.theme.text_primary)),
+                Span::styled("[Esc] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
+                Span::styled(self.i18n.t("custom_playlist.action_close"), Style::default().fg(self.theme.text_primary)),
+            ])
+        };
         Paragraph::new(footer_line).render(chunks[1], buf);
     }
 }

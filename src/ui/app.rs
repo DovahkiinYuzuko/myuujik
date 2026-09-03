@@ -745,10 +745,92 @@ impl App {
                         _ => {}
                     }
                 }
-                ModalState::PlaylistManager { selected_index } => {
+                ModalState::PlaylistManager {
+                    selected_index,
+                    is_naming,
+                    name_input,
+                } => {
                     let mut idx = *selected_index;
+                    let mut naming = *is_naming;
+                    let mut input = name_input.clone();
                     let playlists = self.storage.list_playlists();
                     let len = playlists.len();
+
+                    if naming {
+                        match key.code {
+                            KeyCode::Esc => {
+                                naming = false;
+                                input.clear();
+                                self.hfsm.modal = ModalState::PlaylistManager {
+                                    selected_index: idx,
+                                    is_naming: naming,
+                                    name_input: input,
+                                };
+                            }
+                            KeyCode::Enter => {
+                                let timestamp = crate::logger::epoch_secs_to_utc_ymd(
+                                    std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_secs(),
+                                );
+                                let default_name = format!(
+                                    "Playlist_{:04}{:02}{:02}_{:02}{:02}",
+                                    timestamp.0, timestamp.1, timestamp.2, timestamp.3, timestamp.4
+                                );
+                                let final_name = if input.trim().is_empty() {
+                                    default_name
+                                } else {
+                                    input.trim().to_string()
+                                };
+
+                                match self.storage.save_playlist(&final_name, self.playlist.all_tracks()) {
+                                    Ok(_) => {
+                                        let msg = self.i18n.t_args("custom_playlist.save_success", &[
+                                            ("name", &final_name),
+                                            ("count", &self.playlist.all_tracks().len().to_string()),
+                                        ]);
+                                        self.lyrics_toast = Some((msg, Instant::now(), false));
+                                    }
+                                    Err(e) => {
+                                        let msg = self.i18n.t_args("custom_playlist.save_failed", &[
+                                            ("error", &e.to_string()),
+                                        ]);
+                                        self.lyrics_toast = Some((msg, Instant::now(), true));
+                                    }
+                                }
+                                naming = false;
+                                input.clear();
+                                let updated_playlists = self.storage.list_playlists();
+                                if let Some(new_pos) = updated_playlists.iter().position(|p| p.name == final_name) {
+                                    idx = new_pos;
+                                }
+                                self.hfsm.modal = ModalState::PlaylistManager {
+                                    selected_index: idx,
+                                    is_naming: naming,
+                                    name_input: input,
+                                };
+                            }
+                            KeyCode::Backspace => {
+                                input.pop();
+                                self.hfsm.modal = ModalState::PlaylistManager {
+                                    selected_index: idx,
+                                    is_naming: naming,
+                                    name_input: input,
+                                };
+                            }
+                            KeyCode::Char(c) => {
+                                input.push(c);
+                                self.hfsm.modal = ModalState::PlaylistManager {
+                                    selected_index: idx,
+                                    is_naming: naming,
+                                    name_input: input,
+                                };
+                            }
+                            _ => {}
+                        }
+                        return;
+                    }
 
                     match key.code {
                         KeyCode::Esc | KeyCode::Char('q') => {
@@ -760,7 +842,11 @@ impl App {
                             } else if len > 0 {
                                 idx = len - 1;
                             }
-                            self.hfsm.modal = ModalState::PlaylistManager { selected_index: idx };
+                            self.hfsm.modal = ModalState::PlaylistManager {
+                                selected_index: idx,
+                                is_naming: false,
+                                name_input: String::new(),
+                            };
                         }
                         KeyCode::Down | KeyCode::Char('j') => {
                             if len > 0 {
@@ -770,7 +856,11 @@ impl App {
                                     idx = 0;
                                 }
                             }
-                            self.hfsm.modal = ModalState::PlaylistManager { selected_index: idx };
+                            self.hfsm.modal = ModalState::PlaylistManager {
+                                selected_index: idx,
+                                is_naming: false,
+                                name_input: String::new(),
+                            };
                         }
                         KeyCode::Enter => {
                             if let Some(target) = playlists.get(idx) {
@@ -784,31 +874,11 @@ impl App {
                             }
                         }
                         KeyCode::Char('s') | KeyCode::Char('S') => {
-                            let timestamp = crate::logger::epoch_secs_to_utc_ymd(
-                                std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap_or_default()
-                                    .as_secs(),
-                            );
-                            let default_name = format!(
-                                "Playlist_{:04}{:02}{:02}_{:02}{:02}",
-                                timestamp.0, timestamp.1, timestamp.2, timestamp.3, timestamp.4
-                            );
-                            match self.storage.save_playlist(&default_name, self.playlist.all_tracks()) {
-                                Ok(_) => {
-                                    let msg = self.i18n.t_args("custom_playlist.save_success", &[
-                                        ("name", &default_name),
-                                        ("count", &self.playlist.all_tracks().len().to_string()),
-                                    ]);
-                                    self.lyrics_toast = Some((msg, Instant::now(), false));
-                                }
-                                Err(e) => {
-                                    let msg = self.i18n.t_args("custom_playlist.save_failed", &[
-                                        ("error", &e.to_string()),
-                                    ]);
-                                    self.lyrics_toast = Some((msg, Instant::now(), true));
-                                }
-                            }
+                            self.hfsm.modal = ModalState::PlaylistManager {
+                                selected_index: idx,
+                                is_naming: true,
+                                name_input: String::new(),
+                            };
                         }
                         KeyCode::Char('a') | KeyCode::Char('A') => {
                             self.open_folder_append();
@@ -825,7 +895,11 @@ impl App {
                                 } else if new_len == 0 {
                                     idx = 0;
                                 }
-                                self.hfsm.modal = ModalState::PlaylistManager { selected_index: idx };
+                                self.hfsm.modal = ModalState::PlaylistManager {
+                                    selected_index: idx,
+                                    is_naming: false,
+                                    name_input: String::new(),
+                                };
                             }
                         }
                         _ => {}
@@ -1024,7 +1098,11 @@ impl App {
                 });
             }
             KeyCode::Char('P') => {
-                self.hfsm.open_modal(ModalState::PlaylistManager { selected_index: 0 });
+                self.hfsm.open_modal(ModalState::PlaylistManager {
+                    selected_index: 0,
+                    is_naming: false,
+                    name_input: String::new(),
+                });
             }
             KeyCode::Delete => {
                 if let Some(removed) = self.playlist.remove_entry_at(self.playlist.cursor()) {
@@ -1541,11 +1619,17 @@ impl App {
                         };
                         f.render_widget(m, size);
                     }
-                    ModalState::PlaylistManager { selected_index } => {
+                    ModalState::PlaylistManager {
+                        selected_index,
+                        is_naming,
+                        name_input,
+                    } => {
                         let playlists = self.storage.list_playlists();
                         let m = crate::ui::modals::PlaylistManagerModal {
                             playlists: &playlists,
                             selected_index: *selected_index,
+                            is_naming: *is_naming,
+                            name_input,
                             i18n: &self.i18n,
                             theme: &self.theme,
                         };
@@ -1661,7 +1745,14 @@ mod tests {
 
             // 9. Shift+P キーでプレイリスト管理モーダルオープン、Escでクローズ
             app.handle_key_event(KeyEvent::new(KeyCode::Char('P'), KeyModifiers::NONE));
-            assert_eq!(app.hfsm.modal, ModalState::PlaylistManager { selected_index: 0 });
+            assert_eq!(
+                app.hfsm.modal,
+                ModalState::PlaylistManager {
+                    selected_index: 0,
+                    is_naming: false,
+                    name_input: String::new(),
+                }
+            );
             app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
             assert_eq!(app.hfsm.modal, ModalState::None);
 
