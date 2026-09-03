@@ -177,8 +177,8 @@ impl AppConfig {
             return local_path;
         }
 
-        if let Some(proj_dirs) = directories::ProjectDirs::from("com", "YuzukoUnderson", "myuujik") {
-            let config_dir = proj_dirs.config_dir();
+        if let Some(base_dirs) = directories::BaseDirs::new() {
+            let config_dir = base_dirs.config_dir().join("myuujik");
             return config_dir.join("config.toml");
         }
 

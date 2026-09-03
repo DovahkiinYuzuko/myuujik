@@ -68,8 +68,8 @@ impl LibraryManager {
         if local_cfg.exists() {
             return PathBuf::from(".");
         }
-        if let Some(proj_dirs) = directories::ProjectDirs::from("com", "YuzukoUnderson", "myuujik") {
-            return proj_dirs.config_dir().to_path_buf();
+        if let Some(base_dirs) = directories::BaseDirs::new() {
+            return base_dirs.config_dir().join("myuujik");
         }
         PathBuf::from(".")
     }

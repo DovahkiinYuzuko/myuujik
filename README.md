@@ -151,9 +151,9 @@ myuujik --no-tui /path/to/music
 
 アプリケーションの設定（音量、出力モード、言語、テーマ、EQ設定、セッション情報）は、各 OS の標準ディレクトリに `config.toml` として保存されます。
 
-- **Windows**: `%APPDATA%\YuzukoUnderson\myuujik\config\config.toml`
+- **Windows**: `%APPDATA%\myuujik\config.toml`
 - **Linux**: `~/.config/myuujik/config.toml`
-- **macOS**: `~/Library/Application Support/com.YuzukoUnderson.myuujik/config.toml`
+- **macOS**: `~/Library/Application Support/myuujik/config.toml`
 
 ※実行フォルダ直下に `config.toml` が存在する場合は、ローカルの設定ファイルが優先して読み込まれます（ポータブル運用に対応）。
 
@@ -306,9 +306,9 @@ myuujik --no-tui /path/to/music
 
 Application preferences (volume, audio mode, language, theme, EQ parameters, and session data) are stored in `config.toml` within your system's standard configuration directory:
 
-- **Windows**: `%APPDATA%\YuzukoUnderson\myuujik\config\config.toml`
+- **Windows**: `%APPDATA%\myuujik\config.toml`
 - **Linux**: `~/.config/myuujik/config.toml`
-- **macOS**: `~/Library/Application Support/com.YuzukoUnderson.myuujik/config.toml`
+- **macOS**: `~/Library/Application Support/myuujik/config.toml`
 
 *Note: If `config.toml` exists in the current working directory, it will take precedence over the global config, enabling fully portable setups.*
 
