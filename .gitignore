@@ -2,6 +2,10 @@
 *
 !.gitignore
 # ---AUTO-Generated---
+# .gitignores/.github.gitignore
+!.github/
+!.github/workflows/
+!.github/workflows/*.yml
 # .gitignores/locales.gitignore
 !locales/
 !locales/*.json
