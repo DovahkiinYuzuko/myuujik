@@ -989,6 +989,11 @@ impl App {
                                     }
                                 }
                             }
+                            KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Delete => {
+                                self.delete_current_lyrics();
+                                self.hfsm.close_modal();
+                                return;
+                            }
                             KeyCode::Enter => {
                                 if let Some(cand) = self.lyrics_search_candidates.get(sel).cloned() {
                                     let content = cand.synced_lyrics.or(cand.plain_lyrics);
@@ -1198,6 +1203,9 @@ impl App {
                 }
             }
             KeyCode::Char('D') => {
+                self.delete_current_lyrics();
+            }
+            KeyCode::Char('m') | KeyCode::Char('M') => {
                 self.open_lyrics_search_modal();
             }
             KeyCode::Char('f') => {

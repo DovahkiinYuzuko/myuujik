@@ -121,6 +121,7 @@
     "visualizer": "ビジュアライザ切替",
     "fetch_lyrics": "歌詞自動取得",
     "delete_lyrics": "歌詞ファイル削除",
+    "search_lyrics": "歌詞検索・候補選択",
     "queue": "再生予約キュー追加/解除",
     "export_playlist": "プレイリスト保存 (.m3u8)",
     "reorder_track": "曲順並び替え (Alt+↑/↓)",
