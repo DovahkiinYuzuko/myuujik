@@ -1347,14 +1347,17 @@ impl App {
                 && mouse.row >= modal_area.y
                 && mouse.row < modal_area.y.saturating_add(modal_area.height);
 
+            let visible_h = modal_area.height.saturating_sub(2) as usize;
+            let max_s = crate::ui::modals::HELP_TOTAL_LINES.saturating_sub(visible_h);
+
             match mouse.kind {
                 MouseEventKind::ScrollUp => {
                     *scroll_offset = scroll_offset.saturating_sub(2);
                     return;
                 }
                 MouseEventKind::ScrollDown => {
-                    if *scroll_offset + 2 < crate::ui::modals::HELP_TOTAL_LINES {
-                        *scroll_offset += 2;
+                    if *scroll_offset < max_s {
+                        *scroll_offset = (*scroll_offset + 2).min(max_s);
                     }
                     return;
                 }
@@ -1364,7 +1367,6 @@ impl App {
                         let track_h = modal_area.height.saturating_sub(2).max(1) as f64;
                         let rel_y = mouse.row.saturating_sub(modal_area.y.saturating_add(1)) as f64;
                         let ratio = (rel_y / track_h).clamp(0.0, 1.0);
-                        let max_s = crate::ui::modals::HELP_TOTAL_LINES.saturating_sub(track_h as usize);
                         *scroll_offset = (ratio * max_s as f64).round() as usize;
                         return;
                     }
@@ -1378,7 +1380,6 @@ impl App {
                         let track_h = modal_area.height.saturating_sub(2).max(1) as f64;
                         let rel_y = mouse.row.saturating_sub(modal_area.y.saturating_add(1)) as f64;
                         let ratio = (rel_y / track_h).clamp(0.0, 1.0);
-                        let max_s = crate::ui::modals::HELP_TOTAL_LINES.saturating_sub(track_h as usize);
                         *scroll_offset = (ratio * max_s as f64).round() as usize;
                         return;
                     }
@@ -1565,6 +1566,10 @@ impl App {
                     }
                     Event::Mouse(mouse) => {
                         self.handle_mouse_event(mouse);
+                    }
+                    Event::Resize(w, h) => {
+                        terminal.clear()?;
+                        self.last_terminal_size = Some(Rect::new(0, 0, w, h));
                     }
                     _ => {}
                 }
