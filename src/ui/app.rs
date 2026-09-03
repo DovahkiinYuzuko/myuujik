@@ -149,6 +149,8 @@ impl App {
 
         app.engine.set_equalizer_enabled(app.eq_enabled);
         app.engine.set_equalizer_gains(app.eq_gains.to_vec());
+        app.engine.set_normalize_loudness(app.config.playback.normalize_loudness);
+        app.engine.set_crossfade_secs(app.config.playback.crossfade_secs);
 
         let target_track = if let Some(ref saved_path_str) = config.session.last_track_path {
             let p = PathBuf::from(saved_path_str);

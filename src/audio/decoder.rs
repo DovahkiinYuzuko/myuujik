@@ -33,6 +33,8 @@ pub struct TrackMetadata {
     pub channels: u16,
     pub bits_per_sample: Option<u32>,
     pub codec_name: String,
+    pub replay_gain_db: Option<f32>,
+    pub replay_peak: Option<f32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -122,6 +124,8 @@ impl AudioDecoder {
                     channels: 2,
                     bits_per_sample: Some(16),
                     codec_name: "CD-DA".to_string(),
+                    replay_gain_db: None,
+                    replay_peak: None,
                 };
 
                 return Ok(Self {
@@ -183,9 +187,18 @@ impl AudioDecoder {
         let mut artist = None;
         let mut album = None;
         let mut cover_art = None;
+        let mut replay_gain_db = None;
+        let mut replay_peak = None;
 
         if let Some(meta) = format.metadata().current() {
-            Self::extract_tags(meta.tags(), &mut title, &mut artist, &mut album);
+            Self::extract_tags(
+                meta.tags(),
+                &mut title,
+                &mut artist,
+                &mut album,
+                &mut replay_gain_db,
+                &mut replay_peak,
+            );
             if let Some(visual) = meta.visuals().first() {
                 cover_art = Some(CoverArt {
                     mime_type: visual.media_type.clone(),
@@ -209,6 +222,8 @@ impl AudioDecoder {
             channels,
             bits_per_sample,
             codec_name,
+            replay_gain_db,
+            replay_peak,
         };
 
         let time_base = track.codec_params.time_base;
@@ -360,23 +375,55 @@ impl AudioDecoder {
         title: &mut Option<String>,
         artist: &mut Option<String>,
         album: &mut Option<String>,
+        replay_gain_db: &mut Option<f32>,
+        replay_peak: &mut Option<f32>,
     ) {
         for tag in tags {
+            let val_str = Self::tag_value_to_string(&tag.value);
             if let Some(std_key) = tag.std_key {
                 match std_key {
                     StandardTagKey::TrackTitle if title.is_none() => {
-                        *title = Some(Self::tag_value_to_string(&tag.value));
+                        *title = Some(val_str.clone());
                     }
                     StandardTagKey::Artist if artist.is_none() => {
-                        *artist = Some(Self::tag_value_to_string(&tag.value));
+                        *artist = Some(val_str.clone());
                     }
                     StandardTagKey::Album if album.is_none() => {
-                        *album = Some(Self::tag_value_to_string(&tag.value));
+                        *album = Some(val_str.clone());
+                    }
+                    StandardTagKey::ReplayGainTrackGain if replay_gain_db.is_none() => {
+                        *replay_gain_db = Self::parse_replaygain_db(&val_str);
+                    }
+                    StandardTagKey::ReplayGainTrackPeak if replay_peak.is_none() => {
+                        *replay_peak = val_str.trim().parse::<f32>().ok();
                     }
                     _ => {}
                 }
             }
+
+            // 非標準タグ名（Vorbis Comment, ID3 TXXX, MP4 等）のフォールバック探索
+            let key = tag.key.as_str();
+            if replay_gain_db.is_none() {
+                if key.eq_ignore_ascii_case("replaygain_track_gain")
+                    || key.eq_ignore_ascii_case("r128_track_gain")
+                    || key.eq_ignore_ascii_case("replaygain_gain")
+                {
+                    *replay_gain_db = Self::parse_replaygain_db(&val_str);
+                }
+            }
+            if replay_peak.is_none() {
+                if key.eq_ignore_ascii_case("replaygain_track_peak")
+                    || key.eq_ignore_ascii_case("replaygain_peak")
+                {
+                    *replay_peak = val_str.trim().parse::<f32>().ok();
+                }
+            }
         }
+    }
+
+    pub fn parse_replaygain_db(s: &str) -> Option<f32> {
+        let trimmed = s.trim().trim_end_matches("dB").trim_end_matches("db").trim();
+        trimmed.parse::<f32>().ok()
     }
 
     fn tag_value_to_string(value: &Value) -> String {
@@ -392,6 +439,15 @@ impl AudioDecoder {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn test_replay_gain_parsing() {
+        assert_eq!(AudioDecoder::parse_replaygain_db("-6.50 dB"), Some(-6.5));
+        assert_eq!(AudioDecoder::parse_replaygain_db("+2.15 dB"), Some(2.15));
+        assert_eq!(AudioDecoder::parse_replaygain_db("-3.2 dB"), Some(-3.2));
+        assert_eq!(AudioDecoder::parse_replaygain_db("1.0"), Some(1.0));
+        assert_eq!(AudioDecoder::parse_replaygain_db("invalid"), None);
+    }
 
     #[test]
     fn test_open_non_existent_file_fails() {

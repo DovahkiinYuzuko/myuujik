@@ -55,6 +55,10 @@ pub struct PlaybackConfig {
     pub repeat_mode: String, // "None", "All", "Single"
     #[serde(default = "default_shuffle")]
     pub shuffle: bool,
+    #[serde(default = "default_true")]
+    pub normalize_loudness: bool,
+    #[serde(default = "default_crossfade_secs")]
+    pub crossfade_secs: f32,
 }
 
 fn default_repeat_mode() -> String {
@@ -63,12 +67,17 @@ fn default_repeat_mode() -> String {
 fn default_shuffle() -> bool {
     false
 }
+fn default_crossfade_secs() -> f32 {
+    0.0
+}
 
 impl Default for PlaybackConfig {
     fn default() -> Self {
         Self {
             repeat_mode: default_repeat_mode(),
             shuffle: default_shuffle(),
+            normalize_loudness: default_true(),
+            crossfade_secs: default_crossfade_secs(),
         }
     }
 }
@@ -246,6 +255,8 @@ mod tests {
         cfg.equalizer.enabled = true;
         cfg.equalizer.preset = "Rock".to_string();
         cfg.equalizer.gains = vec![5.0, 3.5, 2.0, -0.5, -1.5, -0.5, 1.5, 3.0, 4.0, 4.5];
+        cfg.playback.normalize_loudness = true;
+        cfg.playback.crossfade_secs = 3.0;
 
         let toml_str = toml::to_string_pretty(&cfg).expect("failed to serialize toml");
         let parsed: AppConfig = toml::from_str(&toml_str).expect("failed to deserialize toml");
@@ -258,6 +269,8 @@ mod tests {
         assert_eq!(parsed.equalizer.preset, "Rock");
         assert_eq!(parsed.equalizer.gains.len(), 10);
         assert_eq!(parsed.equalizer.gains[0], 5.0);
+        assert_eq!(parsed.playback.normalize_loudness, true);
+        assert_eq!(parsed.playback.crossfade_secs, 3.0);
     }
 }
 
