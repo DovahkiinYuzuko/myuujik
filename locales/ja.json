@@ -12,7 +12,8 @@
     "status_stopped": "停止",
     "status_buffering": "バッファ中",
     "status_seeking": "シーク中",
-    "status_error": "エラー"
+    "status_error": "エラー",
+    "language_changed": "言語を切り替えました: {lang}"
   },
   "playlist": {
     "header": "プレイリスト",
@@ -110,6 +111,7 @@
     "open": "フォルダを開く",
     "search": "検索",
     "lyrics": "歌詞/波形",
+    "switch_language": "言語切替 (Shift+L)",
     "visualizer": "ビジュアライザ切替",
     "fetch_lyrics": "歌詞自動取得",
     "delete_lyrics": "歌詞ファイル削除",

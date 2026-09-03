@@ -46,6 +46,28 @@ impl I18n {
         }
     }
 
+    /// 利用可能なロケール一覧（言語コード）を取得（rokeeru-core の自動走査結果を活用）
+    pub fn available_locales(&self) -> Vec<String> {
+        if let Some(loader) = &self.loader {
+            let mut langs = loader.languages();
+            langs.sort();
+            if !langs.is_empty() {
+                return langs;
+            }
+        }
+        vec!["en".to_string(), "ja".to_string()]
+    }
+
+    /// 次のロケールへ順繰りに切り替え、新しいロケール識別子を返す
+    pub fn switch_to_next_locale(&mut self) -> String {
+        let locales = self.available_locales();
+        let current_idx = locales.iter().position(|l| l == &self.current_locale).unwrap_or(0);
+        let next_idx = (current_idx + 1) % locales.len();
+        let next_locale = locales[next_idx].clone();
+        self.set_locale(&next_locale);
+        next_locale
+    }
+
     /// 現在のロケール識別子を取得
     pub fn current_locale(&self) -> &str {
         &self.current_locale
@@ -109,6 +131,34 @@ impl I18n {
     }
 }
 
+/// OS のロケール設定を自動判定（日本語環境であれば "ja"、それ以外はデフォルト "en" を返却）
+pub fn detect_os_locale() -> String {
+    // 1. 環境変数チェック (Linux, macOS, Git Bash, WSL, Windows Terminal 等)
+    for var in ["LC_ALL", "LC_MESSAGES", "LANG"] {
+        if let Ok(val) = std::env::var(var) {
+            let lower = val.to_lowercase();
+            if lower.starts_with("ja") {
+                return "ja".to_string();
+            }
+        }
+    }
+
+    // 2. Windows 専用の判定 (Kernel32 GetUserDefaultUILanguage)
+    #[cfg(windows)]
+    {
+        extern "system" {
+            fn GetUserDefaultUILanguage() -> u16;
+        }
+        // 0x0411 は日本語 (1041)
+        if unsafe { GetUserDefaultUILanguage() } == 0x0411 {
+            return "ja".to_string();
+        }
+    }
+
+    // デフォルトは英語
+    "en".to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,5 +213,27 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_locale_discovery_and_switching() {
+        let mut i18n = I18n::new(PathBuf::from("locales"), "en").expect("failed to init i18n");
+        let locales = i18n.available_locales();
+        assert!(locales.contains(&"en".to_string()));
+        assert!(locales.contains(&"ja".to_string()));
+
+        assert_eq!(i18n.current_locale(), "en");
+        let next = i18n.switch_to_next_locale();
+        assert_eq!(next, "ja");
+        assert_eq!(i18n.current_locale(), "ja");
+        assert_eq!(i18n.language_name(), "日本語");
+
+        let back_to_en = i18n.switch_to_next_locale();
+        assert_eq!(back_to_en, "en");
+        assert_eq!(i18n.current_locale(), "en");
+        assert_eq!(i18n.language_name(), "English");
+
+        let os_locale = detect_os_locale();
+        assert!(os_locale == "ja" || os_locale == "en");
     }
 }

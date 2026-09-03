@@ -97,7 +97,7 @@ fn default_theme() -> String {
     "catppuccin-mocha".to_string()
 }
 fn default_locale() -> String {
-    "ja".to_string()
+    "en".to_string()
 }
 fn default_visualizer_mode() -> String {
     "Type4".to_string()
@@ -196,7 +196,8 @@ impl AppConfig {
             }
         }
 
-        let default_cfg = Self::default();
+        let mut default_cfg = Self::default();
+        default_cfg.ui.locale = crate::i18n::detect_os_locale();
         let _ = default_cfg.save_to(&config_path);
         default_cfg
     }

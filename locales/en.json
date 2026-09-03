@@ -12,7 +12,8 @@
     "status_stopped": "Stopped",
     "status_buffering": "Buffering",
     "status_seeking": "Seeking",
-    "status_error": "Error"
+    "status_error": "Error",
+    "language_changed": "Language changed to: {lang}"
   },
   "playlist": {
     "header": "Playlist",
@@ -110,6 +111,7 @@
     "open": "Open Folder",
     "search": "Search",
     "lyrics": "Lyrics/Wave",
+    "switch_language": "Switch Language (Shift+L)",
     "visualizer": "Toggle Visualizer",
     "fetch_lyrics": "Auto-fetch Lyrics",
     "delete_lyrics": "Delete Lyrics File",

@@ -1093,8 +1093,19 @@ impl App {
             KeyCode::Char('v') | KeyCode::Char('V') => {
                 self.visualizer_mode = self.visualizer_mode.next();
             }
-            KeyCode::Char('l') | KeyCode::Char('L') => {
+            KeyCode::Char('l') => {
                 self.show_lyrics = !self.show_lyrics;
+                self.config.ui.show_lyrics = self.show_lyrics;
+                let _ = self.config.save();
+            }
+            KeyCode::Char('L') => {
+                let next_locale = self.i18n.switch_to_next_locale();
+                self.config.ui.locale = next_locale;
+                let _ = self.config.save();
+                let lang_name = self.i18n.language_name();
+                let msg = self.i18n.t_args("app.language_changed", &[("lang", &lang_name)]);
+                self.lyrics_toast = Some((msg, std::time::Instant::now(), false));
+                self.cursor_moved_at = std::time::Instant::now();
             }
             _ => {}
         }

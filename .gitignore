@@ -6,6 +6,9 @@
 !.github/
 !.github/workflows/
 !.github/workflows/*.yml
+# .gitignores/assets.gitignore
+!assets/
+!assets/screenshot.png
 # .gitignores/locales.gitignore
 !locales/
 !locales/*.json
