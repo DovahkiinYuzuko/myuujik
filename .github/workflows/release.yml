@@ -18,20 +18,20 @@ jobs:
         include:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            format: msi
             artifact_name: windows-x86_64
+            archive_format: zip
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            format: deb
             artifact_name: linux-x86_64
+            archive_format: tar.gz
           - os: macos-latest
             target: aarch64-apple-darwin
-            format: dmg
             artifact_name: macos-aarch64
+            archive_format: tar.gz
           - os: macos-13
             target: x86_64-apple-darwin
-            format: dmg
             artifact_name: macos-x86_64
+            archive_format: tar.gz
 
     steps:
       - name: Checkout repository
@@ -48,36 +48,27 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libasound2-dev
 
-      - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@v1.10.2
-
-      - name: Install cargo-packager
-        run: cargo binstall -y --force cargo-packager
-
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
-
-      - name: Package installer (${{ matrix.format }})
-        run: cargo packager --release --formats ${{ matrix.format }} --target ${{ matrix.target }}
 
       - name: Create portable archive (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           if (!(Test-Path dist)) { New-Item -ItemType Directory -Path dist }
-          Compress-Archive -Path "target/${{ matrix.target }}/release/myuujik.exe", "README.md", "LICENSE.MIT", "NOTICE.md" -DestinationPath "dist/myuujik-${{ matrix.artifact_name }}.zip"
+          Compress-Archive -Path "target/${{ matrix.target }}/release/myuujik.exe", "README.md", "LICENSE.MIT", "NOTICE.md" -DestinationPath "dist/myuujik-${{ github.ref_name }}-${{ matrix.artifact_name }}.zip"
 
       - name: Create portable archive (Unix)
         if: runner.os != 'Windows'
         run: |
           mkdir -p dist
-          tar -czvf "dist/myuujik-${{ matrix.artifact_name }}.tar.gz" -C "target/${{ matrix.target }}/release" myuujik -C "${{ github.workspace }}" README.md LICENSE.MIT NOTICE.md
+          tar -czvf "dist/myuujik-${{ github.ref_name }}-${{ matrix.artifact_name }}.tar.gz" -C "target/${{ matrix.target }}/release" myuujik -C "${{ github.workspace }}" README.md LICENSE.MIT NOTICE.md
 
       - name: Upload temporary build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: artifacts-${{ matrix.artifact_name }}
-          path: dist/**/*
+          path: dist/*
           if-no-files-found: error
 
   publish-release:
@@ -96,7 +87,7 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
-          find downloaded-artifacts -type f \( -name "*.msi" -o -name "*.deb" -o -name "*.dmg" -o -name "*.zip" -o -name "*.tar.gz" \) -exec cp {} release-assets/ \;
+          find downloaded-artifacts -type f \( -name "*.zip" -o -name "*.tar.gz" \) -exec cp {} release-assets/ \;
           echo "=== Collected Release Assets ==="
           ls -lh release-assets/
 

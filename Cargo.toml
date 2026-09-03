@@ -86,12 +86,7 @@ opt-level = 2
 # ==========================================
 [profile.release]
 opt-level = 3
-# lto = true (fat LTO) は1スレッドで極めて重いリンク処理をするため、
-# 並列リンク可能な "thin" に変更（サイズ・実行速度の差はごく僅かでビルドは圧倒的に速い）
-lto = "thin"
-
-# 1スレッド固定を解除し、複数スレッドで並列にコード生成させる
+lto = false
 codegen-units = 16
-
 panic = "abort"
 strip = true
