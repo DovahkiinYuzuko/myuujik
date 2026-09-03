@@ -126,7 +126,7 @@ impl App {
             is_searching: false,
             search_query: String::new(),
             current_lyrics: None,
-            show_lyrics: false,
+            show_lyrics: config.ui.show_lyrics,
             lyrics_fetch_rx: None,
             lyrics_toast: None,
         };
@@ -145,6 +145,11 @@ impl App {
         if let Some(track) = target_track {
             app.playlist.select_and_play_path(&track.path);
             app.apply_track_playback(&track.path);
+
+            if config.session.last_position_secs > 0.0 {
+                app.engine.seek(config.session.last_position_secs);
+                app.engine.pause();
+            }
         }
 
         Ok(app)
@@ -471,6 +476,7 @@ impl App {
             VisualizerMode::Type3 => "Type3".to_string(),
             VisualizerMode::Type4 => "Type4".to_string(),
         };
+        self.config.ui.show_lyrics = self.show_lyrics;
 
         if let Some(root_path) = self.playlist.root_path() {
             self.config.session.last_opened_path = Some(root_path.to_string_lossy().to_string());
@@ -481,6 +487,7 @@ impl App {
                 self.config.session.last_track_path = Some(audio.path.to_string_lossy().to_string());
             }
         }
+        self.config.session.last_position_secs = self.engine.current_position_secs();
 
         crate::logger::info("App", &format!("Saving session config: {:?}", self.config.session));
         self.config.save()
@@ -1373,6 +1380,27 @@ mod tests {
                 modifiers: KeyModifiers::NONE,
             });
             assert_ne!(app.is_exclusive, initial_mode);
+        }
+    }
+
+    #[test]
+    fn test_app_session_save_and_restore() {
+        let mut config = AppConfig::default();
+        config.audio.output_mode = "Mock".to_string();
+        config.ui.show_lyrics = true;
+        config.session.last_position_secs = 12.5;
+
+        if let Ok(mut app) = App::new(&config, None) {
+            // 初期状態がconfigから復元されているか検証
+            assert!(app.show_lyrics);
+
+            // 状態を変更して保存
+            app.show_lyrics = false;
+            app.engine.set_volume(0.60);
+
+            let _ = app.save_session();
+            assert!(!app.config.ui.show_lyrics);
+            assert_eq!((app.config.audio.volume * 100.0).round() as u32, 60);
         }
     }
 }

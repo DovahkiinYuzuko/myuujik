@@ -52,6 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // 新規パスがCLI引数で指定された場合は、過去の曲復元位置をリセット
         config.session.last_track_index = 0;
         config.session.last_track_path = None;
+        config.session.last_position_secs = 0.0;
     }
 
     if args.shuffle {

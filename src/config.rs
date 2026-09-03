@@ -81,6 +81,8 @@ pub struct UiConfig {
     pub locale: String,
     #[serde(default = "default_visualizer_mode")]
     pub visualizer_mode: String, // "Type4" (Wave) or "Type3" (Meter)
+    #[serde(default)]
+    pub show_lyrics: bool,
 }
 
 fn default_image_protocol() -> String {
@@ -103,6 +105,7 @@ impl Default for UiConfig {
             theme: default_theme(),
             locale: default_locale(),
             visualizer_mode: default_visualizer_mode(),
+            show_lyrics: false,
         }
     }
 }
@@ -113,6 +116,8 @@ pub struct SessionConfig {
     #[serde(default)]
     pub last_track_index: usize,
     pub last_track_path: Option<String>,
+    #[serde(default)]
+    pub last_position_secs: f64,
 }
 
 impl Default for AppConfig {
@@ -190,7 +195,27 @@ mod tests {
         assert_eq!(parsed.audio.volume, 0.85);
         assert_eq!(parsed.ui.locale, "ja");
         assert_eq!(parsed.ui.visualizer_mode, "Type4");
+        assert_eq!(parsed.ui.show_lyrics, false);
         assert_eq!(parsed.session.last_track_path, None);
+        assert_eq!(parsed.session.last_position_secs, 0.0);
+    }
+
+    #[test]
+    fn test_custom_config_session_persistence() {
+        let mut cfg = AppConfig::default();
+        cfg.ui.show_lyrics = true;
+        cfg.session.last_opened_path = Some("C:/Music".to_string());
+        cfg.session.last_track_index = 3;
+        cfg.session.last_track_path = Some("C:/Music/test.flac".to_string());
+        cfg.session.last_position_secs = 124.5;
+
+        let toml_str = toml::to_string_pretty(&cfg).expect("failed to serialize toml");
+        let parsed: AppConfig = toml::from_str(&toml_str).expect("failed to deserialize toml");
+        assert_eq!(parsed.ui.show_lyrics, true);
+        assert_eq!(parsed.session.last_opened_path.as_deref(), Some("C:/Music"));
+        assert_eq!(parsed.session.last_track_index, 3);
+        assert_eq!(parsed.session.last_track_path.as_deref(), Some("C:/Music/test.flac"));
+        assert_eq!(parsed.session.last_position_secs, 124.5);
     }
 }
 
