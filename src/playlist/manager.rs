@@ -481,6 +481,11 @@ impl PlaylistManager {
             }
         }
 
+        // 再生対象トラックが再生予約キュー内に存在する場合、キューから消費・削除する
+        if let Some(queue_pos) = self.queue.iter().position(|p| p == &canonical) {
+            self.queue.remove(queue_pos);
+        }
+
         self.all_tracks.iter().find(|t| t.path == canonical)
     }
 
@@ -943,6 +948,16 @@ mod tests {
         let next = pm.next_track().expect("Next track should exist");
         assert_eq!(next.path, t2);
         assert_eq!(pm.queue_position(&t2), None); // キューから消費済み
+
+        // 4. 手動再生 / ギャップレス自動遷移（select_and_play_path）によるキュー消費テスト
+        let (added, pos) = pm.toggle_queue(t1.clone());
+        assert!(added);
+        assert_eq!(pos, 1);
+        assert_eq!(pm.queue_position(&t1), Some(1));
+
+        // ギャップレス遷移やEnterキーで t1 が再生された場合、自動的にキューから消費される
+        pm.select_and_play_path(&t1);
+        assert_eq!(pm.queue_position(&t1), None);
     }
 
     #[test]
