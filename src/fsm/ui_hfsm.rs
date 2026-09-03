@@ -16,7 +16,7 @@ pub enum ModalState {
     None,
     DeviceSelect { selected_index: usize },
     ErrorAlert { message: String },
-    Help,
+    Help { scroll_offset: usize },
     Equalizer { selected_band: usize },
     FavoritesHistory { tab: FavoritesHistoryTab, selected_index: usize },
     PlaylistManager { selected_index: usize },
@@ -106,7 +106,7 @@ mod tests {
         assert_eq!(ui.active_pane, UiPane::Controls);
 
         // モーダルを開いている時はペイン移動が無効化される
-        ui.open_modal(ModalState::Help);
+        ui.open_modal(ModalState::Help { scroll_offset: 0 });
         assert!(ui.is_modal_open());
 
         ui.next_pane();

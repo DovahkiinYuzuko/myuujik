@@ -99,7 +99,7 @@ fn default_theme() -> String {
     "catppuccin-mocha".to_string()
 }
 fn default_locale() -> String {
-    "en".to_string()
+    "ja".to_string()
 }
 fn default_visualizer_mode() -> String {
     "Type4".to_string()

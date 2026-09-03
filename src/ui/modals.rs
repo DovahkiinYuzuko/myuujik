@@ -7,7 +7,10 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Widget};
+use ratatui::widgets::{
+    Block, Borders, Clear, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation,
+    ScrollbarState, Widget,
+};
 
 pub struct DeviceSelectModal<'a> {
     pub devices: &'a [AudioDeviceInfo],
@@ -56,14 +59,21 @@ impl<'a> Widget for DeviceSelectModal<'a> {
     }
 }
 
+pub fn help_modal_area(area: Rect) -> Rect {
+    centered_rect(70, 70, area)
+}
+
+pub const HELP_TOTAL_LINES: usize = 34;
+
 pub struct HelpModal<'a> {
+    pub scroll_offset: usize,
     pub i18n: &'a I18n,
     pub theme: &'a Theme,
 }
 
 impl<'a> Widget for HelpModal<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let modal_area = centered_rect(70, 70, area);
+        let modal_area = help_modal_area(area);
         Clear.render(modal_area, buf);
 
         let title = format!(" [ {} ] ", self.i18n.t("modal.help"));
@@ -128,8 +138,31 @@ impl<'a> Widget for HelpModal<'a> {
             Style::default().fg(self.theme.text_secondary).bg(self.theme.bg_card),
         )));
 
-        let para = Paragraph::new(lines).style(Style::default().bg(self.theme.bg_card));
+        let total_items = lines.len();
+        let visible_height = inner_area.height as usize;
+        let max_scroll = total_items.saturating_sub(visible_height);
+        let effective_offset = self.scroll_offset.min(max_scroll);
+
+        let para = Paragraph::new(lines)
+            .style(Style::default().bg(self.theme.bg_card))
+            .scroll((effective_offset as u16, 0));
         para.render(inner_area, buf);
+
+        // スクロールバーの描画
+        let mut scrollbar_state = ScrollbarState::default()
+            .content_length(total_items)
+            .position(effective_offset);
+
+        let scrollbar = Scrollbar::default()
+            .orientation(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("▲"))
+            .end_symbol(Some("▼"))
+            .track_symbol(Some("│"))
+            .thumb_symbol("█")
+            .thumb_style(Style::default().fg(self.theme.primary))
+            .track_style(Style::default().fg(self.theme.border_unfocused));
+
+        ratatui::widgets::StatefulWidget::render(scrollbar, modal_area, buf, &mut scrollbar_state);
     }
 }
 

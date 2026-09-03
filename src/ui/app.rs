@@ -58,6 +58,8 @@ pub struct App {
     pub status_area: Rect,
     pub is_dragging_seekbar: bool,
     pub drag_target_secs: Option<f64>,
+    pub is_dragging_help_scrollbar: bool,
+    pub last_terminal_size: Option<Rect>,
     pub cursor_moved_at: Instant,
     pub track_changed_at: Instant,
     pub folder_picker_rx: Option<Receiver<Option<PathBuf>>>,
@@ -140,6 +142,8 @@ impl App {
             status_area: Rect::default(),
             is_dragging_seekbar: false,
             drag_target_secs: None,
+            is_dragging_help_scrollbar: false,
+            last_terminal_size: None,
             cursor_moved_at: Instant::now(),
             track_changed_at: Instant::now(),
             folder_picker_rx: None,
@@ -748,7 +752,42 @@ impl App {
                     }
                     _ => {}
                 },
-                ModalState::Help | ModalState::ErrorAlert { .. } => match key.code {
+                ModalState::Help { scroll_offset } => {
+                    let mut offset = *scroll_offset;
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => {
+                            self.hfsm.close_modal();
+                            return;
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            offset = offset.saturating_sub(1);
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            if offset + 1 < crate::ui::modals::HELP_TOTAL_LINES {
+                                offset += 1;
+                            }
+                        }
+                        KeyCode::PageUp => {
+                            offset = offset.saturating_sub(5);
+                        }
+                        KeyCode::PageDown => {
+                            if offset + 5 < crate::ui::modals::HELP_TOTAL_LINES {
+                                offset += 5;
+                            } else {
+                                offset = crate::ui::modals::HELP_TOTAL_LINES.saturating_sub(1);
+                            }
+                        }
+                        KeyCode::Home => {
+                            offset = 0;
+                        }
+                        KeyCode::End => {
+                            offset = crate::ui::modals::HELP_TOTAL_LINES.saturating_sub(1);
+                        }
+                        _ => {}
+                    }
+                    self.hfsm.modal = ModalState::Help { scroll_offset: offset };
+                }
+                ModalState::ErrorAlert { .. } => match key.code {
                     KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
                         self.hfsm.close_modal();
                     }
@@ -1260,7 +1299,7 @@ impl App {
                 }
             }
             KeyCode::Char('?') | KeyCode::Char('h') => {
-                self.hfsm.open_modal(ModalState::Help);
+                self.hfsm.open_modal(ModalState::Help { scroll_offset: 0 });
             }
             KeyCode::Tab => {
                 self.hfsm.next_pane();
@@ -1300,6 +1339,65 @@ impl App {
     }
 
     pub fn handle_mouse_event(&mut self, mouse: MouseEvent) {
+        if let ModalState::Help { ref mut scroll_offset } = self.hfsm.modal {
+            let term_size = self.last_terminal_size.unwrap_or_default();
+            let modal_area = crate::ui::modals::help_modal_area(term_size);
+            let scrollbar_x = modal_area.x.saturating_add(modal_area.width).saturating_sub(1);
+            let is_on_scrollbar = mouse.column >= scrollbar_x.saturating_sub(1)
+                && mouse.row >= modal_area.y
+                && mouse.row < modal_area.y.saturating_add(modal_area.height);
+
+            match mouse.kind {
+                MouseEventKind::ScrollUp => {
+                    *scroll_offset = scroll_offset.saturating_sub(2);
+                    return;
+                }
+                MouseEventKind::ScrollDown => {
+                    if *scroll_offset + 2 < crate::ui::modals::HELP_TOTAL_LINES {
+                        *scroll_offset += 2;
+                    }
+                    return;
+                }
+                MouseEventKind::Down(MouseButton::Left) => {
+                    if is_on_scrollbar {
+                        self.is_dragging_help_scrollbar = true;
+                        let track_h = modal_area.height.saturating_sub(2).max(1) as f64;
+                        let rel_y = mouse.row.saturating_sub(modal_area.y.saturating_add(1)) as f64;
+                        let ratio = (rel_y / track_h).clamp(0.0, 1.0);
+                        let max_s = crate::ui::modals::HELP_TOTAL_LINES.saturating_sub(track_h as usize);
+                        *scroll_offset = (ratio * max_s as f64).round() as usize;
+                        return;
+                    }
+                    if !Self::is_inside_rect(mouse.column, mouse.row, modal_area) {
+                        self.hfsm.close_modal();
+                        return;
+                    }
+                }
+                MouseEventKind::Drag(MouseButton::Left) => {
+                    if self.is_dragging_help_scrollbar {
+                        let track_h = modal_area.height.saturating_sub(2).max(1) as f64;
+                        let rel_y = mouse.row.saturating_sub(modal_area.y.saturating_add(1)) as f64;
+                        let ratio = (rel_y / track_h).clamp(0.0, 1.0);
+                        let max_s = crate::ui::modals::HELP_TOTAL_LINES.saturating_sub(track_h as usize);
+                        *scroll_offset = (ratio * max_s as f64).round() as usize;
+                        return;
+                    }
+                }
+                MouseEventKind::Up(MouseButton::Left) => {
+                    if self.is_dragging_help_scrollbar {
+                        self.is_dragging_help_scrollbar = false;
+                        return;
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        if self.hfsm.is_modal_open() {
+            return;
+        }
+
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 let col = mouse.column;
@@ -1572,6 +1670,10 @@ impl App {
                 self.spectrum_analyzer.process();
             }
 
+            if let Ok(cur_size) = terminal.size() {
+                self.last_terminal_size = Some(Rect::new(0, 0, cur_size.width, cur_size.height));
+            }
+
             terminal.draw(|f| {
                 let size = f.area();
 
@@ -1723,8 +1825,9 @@ impl App {
                         };
                         f.render_widget(m, size);
                     }
-                    ModalState::Help => {
+                    ModalState::Help { scroll_offset } => {
                         let m = HelpModal {
+                            scroll_offset: *scroll_offset,
                             i18n: &self.i18n,
                             theme: &self.theme,
                         };
@@ -1844,7 +1947,15 @@ mod tests {
 
             // ?キーでヘルプモーダルオープン
             app.handle_key_event(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
-            assert_eq!(app.hfsm.modal, ModalState::Help);
+            assert_eq!(app.hfsm.modal, ModalState::Help { scroll_offset: 0 });
+
+            // 下矢印でスクロール
+            app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+            assert_eq!(app.hfsm.modal, ModalState::Help { scroll_offset: 1 });
+
+            // 上矢印でスクロール戻り
+            app.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+            assert_eq!(app.hfsm.modal, ModalState::Help { scroll_offset: 0 });
 
             // Escキーでモーダルクローズ
             app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
