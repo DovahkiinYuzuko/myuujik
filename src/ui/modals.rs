@@ -95,6 +95,7 @@ impl<'a> Widget for HelpModal<'a> {
             ("Shift+S", self.i18n.t("shortcuts.export_playlist")),
             ("e", self.i18n.t("shortcuts.exclusive")),
             ("E", self.i18n.t("shortcuts.devices")),
+            ("g", self.i18n.t("shortcuts.equalizer")),
             ("Tab / Shift+Tab", self.i18n.t("shortcuts.pane_switch")),
             ("q / Esc", self.i18n.t("shortcuts.quit")),
         ];
@@ -203,19 +204,19 @@ impl<'a> Widget for EqualizerModal<'a> {
 
         // 1. ヘッダー: ステータス (ON/BYPASS) & プリセット名
         let status_badge = if self.enabled {
-            Span::styled(" [ ON ] ", Style::default().fg(Color::Rgb(52, 211, 153)).add_modifier(Modifier::BOLD))
+            Span::styled(format!(" [ {} ] ", self.i18n.t("modal.eq_status_on")), Style::default().fg(Color::Rgb(52, 211, 153)).add_modifier(Modifier::BOLD))
         } else {
-            Span::styled(" [ BYPASS ] ", Style::default().fg(Color::Rgb(248, 113, 113)).add_modifier(Modifier::BOLD))
+            Span::styled(format!(" [ {} ] ", self.i18n.t("modal.eq_status_bypass")), Style::default().fg(Color::Rgb(248, 113, 113)).add_modifier(Modifier::BOLD))
         };
 
         let header_line = Line::from(vec![
-            Span::styled(" Status: ", Style::default().fg(self.theme.text_secondary)),
+            Span::styled(format!(" {} ", self.i18n.t("modal.eq_status_label")), Style::default().fg(self.theme.text_secondary)),
             status_badge,
             Span::raw("   "),
-            Span::styled("Preset: ", Style::default().fg(self.theme.text_secondary)),
+            Span::styled(format!("{} ", self.i18n.t("modal.eq_preset_label")), Style::default().fg(self.theme.text_secondary)),
             Span::styled(format!("< {} >", self.current_preset), Style::default().fg(Color::Rgb(250, 204, 21)).add_modifier(Modifier::BOLD)),
             Span::raw("  "),
-            Span::styled("(0:Flat 1:Bass 2:Rock 3:Pop 4:Vocal 5:Jazz 6:Acoustic)", Style::default().fg(self.theme.text_secondary)),
+            Span::styled(self.i18n.t("modal.eq_preset_hint"), Style::default().fg(self.theme.text_secondary)),
         ]);
         Paragraph::new(header_line).render(chunks[0], buf);
 
@@ -322,15 +323,15 @@ impl<'a> Widget for EqualizerModal<'a> {
         // 3. フッター: キー操作ガイド
         let footer_line = Line::from(vec![
             Span::styled(" [←/→] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
-            Span::styled("Band  ", Style::default().fg(self.theme.text_primary)),
+            Span::styled(format!("{}  ", self.i18n.t("modal.eq_guide_band")), Style::default().fg(self.theme.text_primary)),
             Span::styled("[↑/↓] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
-            Span::styled("Gain (±0.5dB)  ", Style::default().fg(self.theme.text_primary)),
+            Span::styled(format!("{}  ", self.i18n.t("modal.eq_guide_gain")), Style::default().fg(self.theme.text_primary)),
             Span::styled("[Shift+↑/↓] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
-            Span::styled("±2.0dB  ", Style::default().fg(self.theme.text_primary)),
+            Span::styled(format!("{}  ", self.i18n.t("modal.eq_guide_gain_fast")), Style::default().fg(self.theme.text_primary)),
             Span::styled("[Space] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
-            Span::styled("Bypass  ", Style::default().fg(self.theme.text_primary)),
+            Span::styled(format!("{}  ", self.i18n.t("modal.eq_guide_bypass")), Style::default().fg(self.theme.text_primary)),
             Span::styled("[Esc/g] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
-            Span::styled("Close", Style::default().fg(self.theme.text_primary)),
+            Span::styled(self.i18n.t("modal.eq_guide_close"), Style::default().fg(self.theme.text_primary)),
         ]);
         Paragraph::new(footer_line).render(chunks[2], buf);
     }
