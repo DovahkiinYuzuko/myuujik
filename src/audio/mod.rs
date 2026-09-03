@@ -12,9 +12,11 @@ pub mod lyrics;
 pub mod fingerprint;
 pub mod lyrics_fetcher;
 pub mod resampler;
+pub mod equalizer;
 
 pub use decoder::{AudioDecoder, CoverArt, TrackMetadata};
 pub use engine::{AudioEngine, EngineCommand};
+pub use equalizer::{Equalizer, EqPreset, EQ_BAND_COUNT, EQ_FREQUENCIES, EQ_BAND_LABELS};
 pub use exclusive_wasapi::ExclusiveBackend;
 pub use mock::MockAudioBackend;
 pub use resampler::AudioResampler;

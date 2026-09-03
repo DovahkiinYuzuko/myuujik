@@ -163,6 +163,179 @@ impl<'a> Widget for ErrorModal<'a> {
     }
 }
 
+pub struct EqualizerModal<'a> {
+    pub enabled: bool,
+    pub gains: &'a [f32; 10],
+    pub selected_band: usize,
+    pub current_preset: &'a str,
+    pub i18n: &'a I18n,
+    pub theme: &'a Theme,
+}
+
+impl<'a> Widget for EqualizerModal<'a> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let modal_area = centered_rect(80, 75, area);
+        Clear.render(modal_area, buf);
+
+        let title = format!(" [ {} ] ", self.i18n.t("modal.equalizer"));
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(self.theme.primary))
+            .style(Style::default().bg(self.theme.bg_card))
+            .title(Span::styled(title, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)));
+
+        let inner_area = block.inner(modal_area);
+        block.render(modal_area, buf);
+
+        if inner_area.height < 12 || inner_area.width < 50 {
+            return;
+        }
+
+        // 3分割レイアウト: ヘッダー(2行), スライダーエリア(Min 8行), フッター(2行)
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Min(8),
+                Constraint::Length(2),
+            ])
+            .split(inner_area);
+
+        // 1. ヘッダー: ステータス (ON/BYPASS) & プリセット名
+        let status_badge = if self.enabled {
+            Span::styled(" [ ON ] ", Style::default().fg(Color::Rgb(52, 211, 153)).add_modifier(Modifier::BOLD))
+        } else {
+            Span::styled(" [ BYPASS ] ", Style::default().fg(Color::Rgb(248, 113, 113)).add_modifier(Modifier::BOLD))
+        };
+
+        let header_line = Line::from(vec![
+            Span::styled(" Status: ", Style::default().fg(self.theme.text_secondary)),
+            status_badge,
+            Span::raw("   "),
+            Span::styled("Preset: ", Style::default().fg(self.theme.text_secondary)),
+            Span::styled(format!("< {} >", self.current_preset), Style::default().fg(Color::Rgb(250, 204, 21)).add_modifier(Modifier::BOLD)),
+            Span::raw("  "),
+            Span::styled("(0:Flat 1:Bass 2:Rock 3:Pop 4:Vocal 5:Jazz 6:Acoustic)", Style::default().fg(self.theme.text_secondary)),
+        ]);
+        Paragraph::new(header_line).render(chunks[0], buf);
+
+        // 2. スライダーエリア: 10バンド横並び
+        let slider_rect = chunks[1];
+        let band_labels = ["31Hz", "62Hz", "125Hz", "250Hz", "500Hz", "1kHz", "2kHz", "4kHz", "8kHz", "16kHz"];
+        let band_width = (slider_rect.width as usize / 10).max(4);
+
+        let slider_height = (slider_rect.height as usize).saturating_sub(2).max(5);
+        let center_row = slider_height / 2;
+
+        for (band_idx, &gain) in self.gains.iter().enumerate() {
+            let col_x = slider_rect.x + (band_idx * band_width) as u16;
+            if col_x + (band_width as u16) > slider_rect.x + slider_rect.width {
+                break;
+            }
+
+            let is_selected = band_idx == self.selected_band;
+            let col_style = if is_selected {
+                Style::default().fg(Color::Rgb(56, 189, 248)).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(self.theme.text_primary)
+            };
+
+            // 上段: ゲイン数値 (例: +6.0dB)
+            let gain_str = if gain > 0.0 {
+                format!("+{:>4.1}", gain)
+            } else {
+                format!("{:>5.1}", gain)
+            };
+            let gain_style = if !self.enabled {
+                Style::default().fg(self.theme.text_secondary)
+            } else if gain > 0.0 {
+                Style::default().fg(Color::Rgb(244, 114, 182))
+            } else if gain < 0.0 {
+                Style::default().fg(Color::Rgb(56, 189, 248))
+            } else {
+                Style::default().fg(self.theme.text_secondary)
+            };
+
+            // ゲイン数値の書き込み
+            let label_x = col_x + (band_width.saturating_sub(gain_str.len()) / 2) as u16;
+            for (ci, c) in gain_str.chars().enumerate() {
+                let px = label_x + ci as u16;
+                if px < slider_rect.x + slider_rect.width {
+                    let cell = &mut buf[(px, slider_rect.y)];
+                    cell.set_char(c);
+                    cell.set_style(if is_selected { gain_style.add_modifier(Modifier::BOLD | Modifier::UNDERLINED) } else { gain_style });
+                }
+            }
+
+            // 中段: 縦型スライダトラック
+            // ゲイン (-12.0 .. +12.0) をスライダー行 (0 .. slider_height - 1) にマッピング
+            let ratio = (gain.clamp(-12.0, 12.0) + 12.0) / 24.0; // 0.0 .. 1.0
+            let knob_row = (ratio * (slider_height.saturating_sub(1) as f32)).round() as usize;
+            let knob_row_from_top = slider_height.saturating_sub(1) - knob_row;
+
+            let track_x = col_x + (band_width / 2) as u16;
+
+            for r in 0..slider_height {
+                let py = slider_rect.y + 1 + r as u16;
+                if py >= slider_rect.y + slider_rect.height {
+                    break;
+                }
+                let cell = &mut buf[(track_x, py)];
+
+                if r == knob_row_from_top {
+                    // スライダーノブ
+                    cell.set_symbol("◆");
+                    let knob_color = if !self.enabled {
+                        self.theme.text_secondary
+                    } else if is_selected {
+                        Color::Rgb(250, 204, 21) // 選択中はイエローハイライト
+                    } else {
+                        Color::White
+                    };
+                    cell.set_fg(knob_color);
+                } else if r == center_row {
+                    // 0dB センターライン
+                    cell.set_symbol("┼");
+                    cell.set_fg(self.theme.border_unfocused);
+                } else {
+                    // レール
+                    cell.set_symbol("│");
+                    cell.set_fg(if is_selected { Color::Rgb(56, 189, 248) } else { self.theme.border_unfocused });
+                }
+            }
+
+            // 下段: 周波数ラベル (例: 1kHz)
+            let freq_label = band_labels[band_idx];
+            let freq_x = col_x + (band_width.saturating_sub(freq_label.len()) / 2) as u16;
+            let freq_y = slider_rect.y + 1 + slider_height as u16;
+
+            for (ci, c) in freq_label.chars().enumerate() {
+                let px = freq_x + ci as u16;
+                if px < slider_rect.x + slider_rect.width && freq_y < slider_rect.y + slider_rect.height {
+                    let cell = &mut buf[(px, freq_y)];
+                    cell.set_char(c);
+                    cell.set_style(col_style);
+                }
+            }
+        }
+
+        // 3. フッター: キー操作ガイド
+        let footer_line = Line::from(vec![
+            Span::styled(" [←/→] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
+            Span::styled("Band  ", Style::default().fg(self.theme.text_primary)),
+            Span::styled("[↑/↓] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
+            Span::styled("Gain (±0.5dB)  ", Style::default().fg(self.theme.text_primary)),
+            Span::styled("[Shift+↑/↓] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
+            Span::styled("±2.0dB  ", Style::default().fg(self.theme.text_primary)),
+            Span::styled("[Space] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
+            Span::styled("Bypass  ", Style::default().fg(self.theme.text_primary)),
+            Span::styled("[Esc/g] ", Style::default().fg(self.theme.primary).add_modifier(Modifier::BOLD)),
+            Span::styled("Close", Style::default().fg(self.theme.text_primary)),
+        ]);
+        Paragraph::new(footer_line).render(chunks[2], buf);
+    }
+}
+
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)

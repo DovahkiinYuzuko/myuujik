@@ -11,6 +11,7 @@ pub enum ModalState {
     DeviceSelect { selected_index: usize },
     ErrorAlert { message: String },
     Help,
+    Equalizer { selected_band: usize },
 }
 
 #[derive(Debug, Clone)]

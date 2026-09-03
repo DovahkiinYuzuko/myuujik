@@ -10,7 +10,7 @@ use crate::i18n::I18n;
 use crate::playlist::item::PlaylistEntry;
 use crate::playlist::manager::PlaylistManager;
 use crate::ui::image_view::CoverArtWidget;
-use crate::ui::modals::{DeviceSelectModal, ErrorModal, HelpModal};
+use crate::ui::modals::{DeviceSelectModal, EqualizerModal, ErrorModal, HelpModal};
 use crate::ui::theme::Theme;
 use crate::ui::views::{ControlsView, FooterView, PlaylistView, TrackInfoView};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -61,6 +61,9 @@ pub struct App {
     pub show_lyrics: bool,
     pub lyrics_fetch_rx: Option<Receiver<Result<(PathBuf, String), String>>>,
     pub lyrics_toast: Option<(String, Instant, bool)>,
+    pub eq_enabled: bool,
+    pub eq_gains: [f32; 10],
+    pub eq_preset: String,
 }
 
 impl App {
@@ -133,7 +136,19 @@ impl App {
             show_lyrics: config.ui.show_lyrics,
             lyrics_fetch_rx: None,
             lyrics_toast: None,
+            eq_enabled: config.equalizer.enabled,
+            eq_gains: {
+                let mut g = [0.0f32; 10];
+                for (i, &val) in config.equalizer.gains.iter().take(10).enumerate() {
+                    g[i] = val;
+                }
+                g
+            },
+            eq_preset: config.equalizer.preset.clone(),
         };
+
+        app.engine.set_equalizer_enabled(app.eq_enabled);
+        app.engine.set_equalizer_gains(app.eq_gains.to_vec());
 
         let target_track = if let Some(ref saved_path_str) = config.session.last_track_path {
             let p = PathBuf::from(saved_path_str);
@@ -482,6 +497,9 @@ impl App {
             VisualizerMode::Spectrum => "Spectrum".to_string(),
         };
         self.config.ui.show_lyrics = self.show_lyrics;
+        self.config.equalizer.enabled = self.eq_enabled;
+        self.config.equalizer.gains = self.eq_gains.to_vec();
+        self.config.equalizer.preset = self.eq_preset.clone();
 
         if let Some(root_path) = self.playlist.root_path() {
             self.config.session.last_opened_path = Some(root_path.to_string_lossy().to_string());
@@ -549,6 +567,56 @@ impl App {
                     }
                     _ => {}
                 },
+                ModalState::Equalizer { selected_band } => {
+                    let mut band = *selected_band;
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('g') | KeyCode::Char('G') => {
+                            self.hfsm.close_modal();
+                        }
+                        KeyCode::Left => {
+                            if band > 0 {
+                                band -= 1;
+                            } else {
+                                band = 9;
+                            }
+                            self.hfsm.modal = ModalState::Equalizer { selected_band: band };
+                        }
+                        KeyCode::Right => {
+                            if band < 9 {
+                                band += 1;
+                            } else {
+                                band = 0;
+                            }
+                            self.hfsm.modal = ModalState::Equalizer { selected_band: band };
+                        }
+                        KeyCode::Up => {
+                            let step = if key.modifiers.contains(KeyModifiers::SHIFT) { 2.0 } else { 0.5 };
+                            self.eq_gains[band] = (self.eq_gains[band] + step).min(12.0);
+                            self.eq_preset = "Custom".to_string();
+                            self.engine.set_equalizer_gains(self.eq_gains.to_vec());
+                        }
+                        KeyCode::Down => {
+                            let step = if key.modifiers.contains(KeyModifiers::SHIFT) { 2.0 } else { 0.5 };
+                            self.eq_gains[band] = (self.eq_gains[band] - step).max(-12.0);
+                            self.eq_preset = "Custom".to_string();
+                            self.engine.set_equalizer_gains(self.eq_gains.to_vec());
+                        }
+                        KeyCode::Char(' ') => {
+                            self.eq_enabled = !self.eq_enabled;
+                            self.engine.set_equalizer_enabled(self.eq_enabled);
+                        }
+                        KeyCode::Char(c) if ('0'..='6').contains(&c) => {
+                            let presets = crate::audio::equalizer::EqPreset::all();
+                            let idx = (c as usize) - ('0' as usize);
+                            if let Some(&p) = presets.get(idx) {
+                                self.eq_gains = p.gains();
+                                self.eq_preset = p.display_name().to_string();
+                                self.engine.set_equalizer_gains(self.eq_gains.to_vec());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 ModalState::None => {}
             }
             return;
@@ -710,6 +778,9 @@ impl App {
                 self.available_devices = SharedBackend::list_devices();
                 self.device_modal_idx = 0;
                 self.hfsm.open_modal(ModalState::DeviceSelect { selected_index: 0 });
+            }
+            KeyCode::Char('g') | KeyCode::Char('G') => {
+                self.hfsm.open_modal(ModalState::Equalizer { selected_band: 0 });
             }
             KeyCode::Char('d') => {
                 self.start_lyrics_auto_fetch();
@@ -1196,6 +1267,17 @@ impl App {
                     ModalState::ErrorAlert { message } => {
                         let m = ErrorModal {
                             message,
+                            i18n: &self.i18n,
+                            theme: &self.theme,
+                        };
+                        f.render_widget(m, size);
+                    }
+                    ModalState::Equalizer { selected_band } => {
+                        let m = EqualizerModal {
+                            enabled: self.eq_enabled,
+                            gains: &self.eq_gains,
+                            selected_band: *selected_band,
+                            current_preset: &self.eq_preset,
                             i18n: &self.i18n,
                             theme: &self.theme,
                         };

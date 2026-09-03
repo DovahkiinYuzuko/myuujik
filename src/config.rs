@@ -11,6 +11,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub ui: UiConfig,
     #[serde(default)]
+    pub equalizer: EqualizerConfig,
+    #[serde(default)]
     pub session: SessionConfig,
 }
 
@@ -126,7 +128,40 @@ impl Default for AppConfig {
             audio: AudioConfig::default(),
             playback: PlaybackConfig::default(),
             ui: UiConfig::default(),
+            equalizer: EqualizerConfig::default(),
             session: SessionConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EqualizerConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_eq_gains")]
+    pub gains: Vec<f32>,
+    #[serde(default = "default_eq_preset")]
+    pub preset: String,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_eq_gains() -> Vec<f32> {
+    vec![0.0; 10]
+}
+
+fn default_eq_preset() -> String {
+    "Flat".to_string()
+}
+
+impl Default for EqualizerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_true(),
+            gains: default_eq_gains(),
+            preset: default_eq_preset(),
         }
     }
 }
@@ -208,6 +243,9 @@ mod tests {
         cfg.session.last_track_index = 3;
         cfg.session.last_track_path = Some("C:/Music/test.flac".to_string());
         cfg.session.last_position_secs = 124.5;
+        cfg.equalizer.enabled = true;
+        cfg.equalizer.preset = "Rock".to_string();
+        cfg.equalizer.gains = vec![5.0, 3.5, 2.0, -0.5, -1.5, -0.5, 1.5, 3.0, 4.0, 4.5];
 
         let toml_str = toml::to_string_pretty(&cfg).expect("failed to serialize toml");
         let parsed: AppConfig = toml::from_str(&toml_str).expect("failed to deserialize toml");
@@ -216,6 +254,10 @@ mod tests {
         assert_eq!(parsed.session.last_track_index, 3);
         assert_eq!(parsed.session.last_track_path.as_deref(), Some("C:/Music/test.flac"));
         assert_eq!(parsed.session.last_position_secs, 124.5);
+        assert_eq!(parsed.equalizer.enabled, true);
+        assert_eq!(parsed.equalizer.preset, "Rock");
+        assert_eq!(parsed.equalizer.gains.len(), 10);
+        assert_eq!(parsed.equalizer.gains[0], 5.0);
     }
 }
 

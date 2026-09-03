@@ -30,6 +30,8 @@ pub enum EngineCommand {
     SetVolume(f32),
     SetOutputMode(String),
     SetOutputDevice(String),
+    SetEqualizerGains(Vec<f32>),
+    SetEqualizerEnabled(bool),
 }
 
 #[derive(Clone)]
@@ -129,6 +131,14 @@ impl AudioEngine {
         self.shared_state.get_visualizer_raw_samples()
     }
 
+    pub fn set_equalizer_gains(&self, gains: Vec<f32>) {
+        let _ = self.send_command(EngineCommand::SetEqualizerGains(gains));
+    }
+
+    pub fn set_equalizer_enabled(&self, enabled: bool) {
+        let _ = self.send_command(EngineCommand::SetEqualizerEnabled(enabled));
+    }
+
     pub fn send_command(&self, cmd: EngineCommand) -> Result<(), crossbeam_channel::SendError<EngineCommand>> {
         self.cmd_tx.send(cmd)
     }
@@ -215,6 +225,7 @@ impl AudioEngine {
         let mut pending_offset: usize = 0;
         let mut is_eof = false;
         let mut eof_drain_started: Option<std::time::Instant> = None;
+        let mut equalizer = crate::audio::equalizer::Equalizer::new(44100.0);
 
         const RING_BUFFER_SIZE: usize = 96_000; // 約1秒分 (48kHz Stereo)
 
@@ -313,6 +324,8 @@ impl AudioEngine {
                                         backend = Some(b);
                                         producer = Some(used_prod.unwrap_or(new_prod));
                                         decoder = Some(dec);
+                                        equalizer.set_sample_rate(meta.sample_rate as f32);
+                                        equalizer.reset_state();
                                         shared_state.is_playing.store(true, Ordering::Relaxed);
                                         fsm.write().unwrap().transition(PlaybackEvent::BufferReady);
                                         logger::info("AudioEngine", "Backend initialized and started successfully.");
@@ -404,6 +417,12 @@ impl AudioEngine {
                     EngineCommand::SetVolume(vol) => {
                         logger::debug("AudioEngine", &format!("Volume set to {:.2}", vol));
                         shared_state.set_volume(vol);
+                    }
+                    EngineCommand::SetEqualizerGains(gains) => {
+                        equalizer.set_gains(&gains);
+                    }
+                    EngineCommand::SetEqualizerEnabled(enabled) => {
+                        equalizer.enabled = enabled;
                     }
                     EngineCommand::SetOutputMode(mode) => {
                         logger::info("AudioEngine", &format!("Switching output mode from {} to {}", current_mode, mode));
@@ -534,10 +553,13 @@ impl AudioEngine {
                         // 2. 残余サンプルが空になり、かつ未完了（!is_eof）でリングバッファに空きがあれば次のパケットを取得
                         if !is_eof && prod.slots() > 0 {
                             match dec.next_interleaved_packet() {
-                                Ok(Some(samples)) => {
+                                Ok(Some(mut samples)) => {
                                     if samples.is_empty() {
                                         continue;
                                     }
+                                    let ch_count = shared_state.channels.load(Ordering::Relaxed).max(1) as usize;
+                                    equalizer.process_interleaved(&mut samples, ch_count);
+
                                     let available_slots = prod.slots();
                                     let to_push = available_slots.min(samples.len());
 
@@ -572,6 +594,7 @@ impl AudioEngine {
                                             }
                                             shared_state.current_sample_position.store(0, Ordering::Relaxed);
 
+                                            equalizer.set_sample_rate(next_meta.sample_rate as f32);
                                             let _ = notif_tx.send(EngineNotification::TrackTransitioned(next_path, next_meta));
                                             *dec = next_dec;
                                             continue;
